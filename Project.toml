@@ -4,13 +4,36 @@ authors = ["Wolfhart Feldmeier <wolfhart.feldmeier@uni-jena.de>"]
 version = "1.0.0-DEV"
 
 [deps]
+ChunkSplitters = "ae650224-84b6-46f8-82ea-d812ca08434e"
+CoordinateTransformations = "150eb455-5306-5404-9cee-2592286d6298"
+FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
+GPURotate = "b5b053e5-4ec9-4538-b6d2-117730a7bd4b"
+GridKernelDensity = "7e62f66d-cb2e-42d7-88c4-4af397292e4f"
+Images = "916415d5-f1e6-5110-898d-aaa5f9f070e0"
+PointCloudModels = "0c81c233-99f2-4e9d-8280-42bd38b11ac0"
+Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
+SimpleUnPack = "ce78b400-467f-4804-87d8-8f486da07d0a"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
+
+[weakdeps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+
+[extensions]
+DiffPointRasterisationCUDAExt = "CUDA"
+DiffPointRasterisationChainRulesCoreExt = "ChainRulesCore"
 
 [compat]
 julia = "1"
 
 [extras]
+BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+ChainRulesTestUtils = "cdddcdb0-9152-4a09-a978-84456f9df70a"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
+TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
 [targets]
-test = ["Test"]
+test = ["BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
