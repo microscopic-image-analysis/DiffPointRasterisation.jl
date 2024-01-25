@@ -24,8 +24,8 @@ raster(
     points::AbstractMatrix{T},
     rotation,
     translation,
-    background=isa(rotation, AbstractMatrix{<:Number}) ? zero(T) : Zeros(length(rotation)),
-    weight=isa(rotation, AbstractMatrix{<:Number}) ? one(T) : Ones(length(rotation)),
+    background=isa(rotation, AbstractMatrix{<:Number}) ? zero(T) : Zeros(T, length(rotation)),
+    weight=isa(rotation, AbstractMatrix{<:Number}) ? one(T) : Ones(T, length(rotation)),
 ) where {T} = raster!(
     isa(rotation, AbstractMatrix{<:Number}) ? similar(points, grid_size) : [similar(points, grid_size) for _ in 1:length(rotation)],
     points,
@@ -115,8 +115,8 @@ raster_project(
     points::AbstractMatrix{T},
     rotation,
     translation,
-    background=isa(rotation, AbstractMatrix{<:Number}) ? zero(T) : Zeros(length(rotation)),
-    weight=isa(rotation, AbstractMatrix{<:Number}) ? one(T) : Ones(length(rotation)),
+    background=isa(rotation, AbstractMatrix{<:Number}) ? zero(T) : Zeros(T, length(rotation)),
+    weight=isa(rotation, AbstractMatrix{<:Number}) ? one(T) : Ones(T, length(rotation)),
 ) where {T} = raster_project!(
     isa(rotation, AbstractMatrix{<:Number}) ? similar(points, grid_size) : [similar(points, grid_size) for _ in 1:length(rotation)],
     points,
@@ -139,8 +139,8 @@ raster!(
     points,
     rotation,
     translation,
-    background=isa(out, AbstractArray{T}) ? zero(T) : Zeros(length(out)),
-    weight=isa(out, AbstractArray{T}) ? one(T) : Ones(length(out)),
+    background=isa(out, AbstractArray{T}) ? zero(T) : Zeros(T, length(out)),
+    weight=isa(out, AbstractArray{T}) ? one(T) : Ones(T, length(out)),
 ) where {N_out, T<:Number} = _raster!(
     Val(N_out),
     out,
@@ -175,8 +175,8 @@ raster_project!(
     points,
     rotation,
     translation,
-    background=isa(out, AbstractArray{T}) ? zero(T) : Zeros(length(out)),
-    weight=isa(out, AbstractArray{T}) ? one(T) : Ones(length(out)),
+    background=isa(out, AbstractArray{T}) ? zero(T) : Zeros(T, length(out)),
+    weight=isa(out, AbstractArray{T}) ? one(T) : Ones(T, length(out)),
 ) where {N_out, T<:Number} = _raster!(
     Val(N_out + 1),
     out,
@@ -379,14 +379,16 @@ function _raster_pullback!(
     translation::AbstractVector{<:Number},
     background::Number=zero(T),
     weight::Number=one(T);
+    accumulate_prealloc=false,
     prealloc...,
 ) where {N_in, N_out, T}
-    args = (;points, rotation)
-    alloc = _pullback_alloc_points(args, prealloc)
-    @unpack ds_dpoints = alloc
     # The strategy followed here is to redo some of the calculations
     # made in the forward pass instead of caching them in the forward
     # pass and reusing them here.
+    args = (;points,)
+    @unpack ds_dpoints = _pullback_alloc_serial(args, NamedTuple(prealloc))
+    accumulate_prealloc || fill!(ds_dpoints, zero(T))
+
     origin = (-@SVector ones(T, N_out)) - translation
     projection_idxs = SVector(ntuple(identity, N_out))
     scale = SVector{N_out, T}(size(ds_dout)) / 2 
@@ -395,8 +397,8 @@ function _raster_pullback!(
     all_density_idxs = CartesianIndices(ds_dout)
 
     # initialize some output for accumulation
-    ds_dtranslation = @SVector zeros(N_out)
-    ds_dprojection_rotation = @SMatrix zeros(N_out, N_in)
+    ds_dtranslation = @SVector zeros(T, N_out)
+    ds_dprojection_rotation = @SMatrix zeros(T, N_out, N_in)
     ds_dweight = zero(T)
 
     # loop over points
@@ -407,7 +409,7 @@ function _raster_pullback!(
         deltas_lower = coord - (idx_lower .- half)
         deltas = [deltas_lower 1 .- deltas_lower]
 
-        ds_dcoord = @SVector zeros(N_out)
+        ds_dcoord = @SVector zeros(T, N_out)
         # loop over voxels that are affected by point
         for shift in shifts
             voxel_idx = CartesianIndex(idx_lower.data .+ shift)
@@ -427,9 +429,9 @@ function _raster_pullback!(
         ds_dtranslation += scaled
         ds_dprojection_rotation += scaled * point'
         ds_dpoint = rotation[projection_idxs, :]' * scaled 
-        ds_dpoints[:, pt_idx] .= ds_dpoint
+        @view(ds_dpoints[:, pt_idx]) .+= ds_dpoint
     end
-    ds_drotation = N_out == N_in ? ds_dprojection_rotation : vcat(ds_dprojection_rotation, @SMatrix zeros(1, N_in))
+    ds_drotation = N_out == N_in ? ds_dprojection_rotation : vcat(ds_dprojection_rotation, @SMatrix zeros(T, 1, N_in))
     return (; points=ds_dpoints, rotation=ds_drotation, translation=ds_dtranslation, background=sum(ds_dout), weight=ds_dweight)
 end
 
@@ -461,18 +463,22 @@ function _raster_pullback!(
     points::AbstractMatrix{<:Number},
     rotation::AbstractVector{<:AbstractMatrix{<:Number}},
     translation::AbstractVector{<:AbstractVector{<:Number}},
-    background::AbstractVector{<:Number}=Zeros(length(rotation)),
-    weight::AbstractVector{<:Number}=Ones(length(rotation));
+    # TODO: for some reason type inference fails if the following
+    # two arrays are FillArrays... 
+    background::AbstractVector{<:Number}=zeros(T, length(rotation)),
+    weight::AbstractVector{<:Number}=ones(T, length(rotation));
     prealloc...
 ) where {N_in, N_out, T}
     args = (;points, rotation, translation, background, weight)
-    alloc = _pullback_alloc(args, prealloc)
-    @unpack ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight = alloc
+    batch_size = length(translation)
+    @unpack ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight = _pullback_alloc_threaded(args, NamedTuple(prealloc), min(batch_size, Threads.nthreads()))
+    @assert isa(ds_dpoints, AbstractVector{<:AbstractMatrix{<:Number}})
 
-    Threads.@threads for (idxs, ichunk) in chunks(eachindex(ds_dout, rotation, translation, background, weight), Threads.nthreads())
+    Threads.@threads for (idxs, ichunk) in chunks(eachindex(ds_dout, rotation, translation, background, weight), length(ds_dpoints))
+        fill!(ds_dpoints[ichunk], zero(T))
         for i in idxs
             args_i = (ds_dout[i], points, rotation[i], translation[i], background[i], weight[i])
-            result_i = _raster_pullback!(Val(N_in), args_i...; points=ds_dpoints[i])
+            result_i = _raster_pullback!(Val(N_in), args_i...; accumulate_prealloc=true, points=ds_dpoints[ichunk])
             ds_drotation[i] .= result_i.rotation
             ds_dtranslation[i] = result_i.translation
             ds_dbackground[i] = result_i.background
@@ -536,21 +542,40 @@ end
     @test ds_dargs_threaded.points ≈ sum(ds_dpoints)
 end
 
-function _pullback_alloc(args::NamedTuple{K, V}, prealloc) where {K, V}
+_pullback_alloc_serial(args, prealloc) = _pullback_alloc_points_serial(args, prealloc)
+
+function _pullback_alloc_threaded(args, prealloc, n)
+    points = _pullback_alloc_points_threaded(args, prealloc, n)
     other_args = Base.structdiff(args, NamedTuple{(:points,)})
-    others = _pullback_alloc_others(other_args, prealloc)
-    points = _pullback_alloc_points(args, prealloc)
+    others = _pullback_alloc_others_threaded(other_args, prealloc)
     merge(points, others)
 end
 
-function _pullback_alloc_others(args::NamedTuple{K}, prealloc) where {K}
-    # NamedTuple{map(k -> Symbol("ds_d" * string(k)), K)}(get(() ->  deepsimilar(args[k]), prealloc, k) for k in K)
-    NamedTuple(k=>get(() ->  deepsimilar(args[k]), prealloc, k) for k in K)
+function _pullback_alloc_others_threaded(need_allocation, ::NamedTuple{})
+    keys_alloc = prefix.(keys(need_allocation))
+    vals = make_similar.(values(need_allocation))
+    NamedTuple{keys_alloc}(vals)
 end
 
-_pullback_alloc_points(args, prealloc) = (;ds_dpoints = get(() -> isa(args.rotation, AbstractVector{<:AbstractMatrix}) ? [similar(args.points) for _ in 1:length(args.rotation)] : similar(args.points), prealloc, :points))
+function _pullback_alloc_others_threaded(args, prealloc)
+    # it's a bit tricky to get this type-stable, but the following does the trick
+    need_allocation = Base.structdiff(args, prealloc)
+    keys_alloc = prefix.(keys(need_allocation))
+    vals = make_similar.(values(need_allocation))
+    alloc = NamedTuple{keys_alloc}(vals)
+    keys_prealloc = prefix.(keys(prealloc))
+    prefixed_prealloc = NamedTuple{keys_prealloc}(values(prealloc))
+    merge(prefixed_prealloc, alloc)
+end
 
-deepsimilar(x) = eltype(x) == eltype(eltype(x)) ? similar(x) : map(deepsimilar, x)
+_pullback_alloc_points_serial(args, prealloc) = (;ds_dpoints = get(() -> similar(args.points), prealloc, :points))
+
+_pullback_alloc_points_threaded(args, prealloc, n) = (;ds_dpoints = get(() -> [similar(args.points) for _ in 1:n], prealloc, :points))
+
+prefix(s::Symbol) = Symbol("ds_d" * string(s))
+
+make_similar(x) = similar(x)
+make_similar(x::AbstractVector{<:AbstractArray}) = [similar(element) for element in x]
 
 
 function interpolation_weight(n, N, deltas, shift)
