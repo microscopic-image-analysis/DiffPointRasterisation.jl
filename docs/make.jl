@@ -12,8 +12,8 @@ makedocs(;
     checkdocs=:exports,
 )
 
-# deploydocs(;
-#     repo="github.com/trahflow/DiffPointRasterisation.jl.git",
-#     devbranch="main",
-#     push_preview=true,
-# )
+deploydocs(;
+    repo="github.com/trahflow/DiffPointRasterisation.jl.git",
+    devbranch="main",
+    push_preview=true,
+)

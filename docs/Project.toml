@@ -1,3 +1,6 @@
 [deps]
 DiffPointRasterisation = "f984992d-3c45-4382-99a1-cf20f5c47c61"
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+
+[compat]
+Documenter = "1.2"
