@@ -1,3 +1,24 @@
+"""
+    raster(grid_size, points, rotation, translation, [background, weight])
+
+Interpolate points (multi-) linearly into an Nd-array of size `grid_size`.
+
+Before `points` are interpolated into the array, each point ``p`` is first
+transformed according to
+```math
+\\hat{p} = R p + t
+```
+with `rotation` ``R`` and `translation` ``t``.
+
+Points ``\\hat{p}`` that fall into the N-dimensional hypercube
+with edges spanning from (-1, 1) in each dimension, are interpolated
+into the output array.
+
+The total `weight` of each point is distributed onto the 2^N nearest
+pixels/voxels of the output array (according to the closeness of the
+voxel center to the coordinates of point ``\\hat{p}``) via
+N-linear interpolation.
+"""
 raster(
     grid_size,
     points::AbstractMatrix{T},
@@ -65,6 +86,30 @@ raster(
 end
 
 
+"""
+    raster_project(grid_size, points, rotation, translation, [background, weight])
+
+Interpolate N-dimensional points (multi-) linearly into an N-1 dimensional-array
+of size `grid_size`.
+
+Before `points` are interpolated into the array, each point ``p`` is first
+transformed according to
+```math
+\\hat{p} = P R p + t
+```
+with N-dimensional `rotation` ``R``, projection ``P`` and N-1-dmensional
+`translation` ``t``.
+The projection simply drops the last coordinate of ``R p``.
+
+Points ``\\hat{p}`` that fall into the N-1-dimensional hypercube
+with edges spanning from (-1, 1) in each dimension, are interpolated
+into the output array.
+
+The total `weight` of each point is distributed onto the 2^(N-1) nearest
+pixels/voxels of the output array (according to the closeness of the
+voxel center to the coordinates of point ``\\hat{p}``) via
+N-1-linear interpolation.
+"""
 raster_project(
     grid_size,
     points::AbstractMatrix{T},
@@ -83,13 +128,11 @@ raster_project(
 
 
 """
-    raster!(out, points, grid, [norm_factor, shifts])
+    raster!(out, points, rotation, translation, [background, weight])
 
 Inplace version of `raster`.
-Interpolate points (multi-) linearly into `out` array (which needs to have size `grid.size`).
-The total weight of each point is distributed onto the 2^N nearest bins of the `grid` (according
-to the closeness of the bin to the point) via (multi-)linear interpolation.
-Each point in `eachcol(points)` contributes an equal weight of `norm_factor`.
+
+Write output into `out` and return `out`.
 """
 raster!(
     out::Union{AbstractArray{T, N_out}, AbstractVector{<:AbstractArray{T, N_out}}},
@@ -120,6 +163,13 @@ raster!(
 end
 
 
+"""
+    raster_project!(out, points, rotation, translation, [background, weight])
+
+Inplace version of `raster_project`.
+
+Write output into `out` and return `out`.
+"""
 raster_project!(
     out::Union{AbstractArray{T, N_out}, AbstractVector{<:AbstractArray{T, N_out}}},
     points,
@@ -259,6 +309,25 @@ end
     @test out_threaded ≈ out
 end
 
+
+"""
+    raster_pullback!(
+        ds_dout, points, rotation, translation, [background, weight];
+        [ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight]
+    )
+
+Pullback for `raster(...)`/`raster!(...)`.
+
+Take as input `ds_dout` the sensitivity of some quantity (`s` for "scalar")
+to the *output* `out` of the function `raster(args...)`, as well as
+the exact same arguments `args` that were passed to `raster`, and
+return the sensitivities of `s` to the *inputs* `args` of the function
+`raster()`/`raster!()`.
+
+Optionally, pre-allocated output arrays for each input sensitivity can be
+specified as `ds_d\$INPUT_NAME`, e.g. `ds_dtranslation = [zeros(2) for _ in 1:8]`
+for 2-dimensional points and a batch size of 8.
+"""
 raster_pullback!(
     ds_dout::Union{AbstractArray{<:Number, N_out}, AbstractVector{<:AbstractArray{<:Number, N_out}}},
     args...;
@@ -270,6 +339,26 @@ raster_pullback!(
     prealloc...
 )
 
+
+
+"""
+    raster_project_pullback!(
+        ds_dout, points, rotation, translation, [background, weight];
+        [ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight]
+    )
+
+Pullback for `raster_project(...)`/`raster_project!(...)`.
+
+Take as input `ds_dout` the sensitivity of some quantity (`s` for "scalar")
+to the *output* `out` of the function `raster_project(args...)`, as well as
+the exact same arguments `args` that were passed to `raster_project`, and
+return the sensitivities of `s` to the *inputs* `args` of the function
+`raster_project()`/`raster_project!()`.
+
+Optionally, pre-allocated output arrays for each input sensitivity can be
+specified as `ds_d\$INPUT_NAME`, e.g. `ds_dtranslation = [zeros(2) for _ in 1:8]`
+for 3-dimensional points and a batch size of 8.
+"""
 raster_project_pullback!(
     ds_dout::Union{AbstractArray{<:Number, N_out}, AbstractVector{<:AbstractArray{<:Number, N_out}}},
     args...;
