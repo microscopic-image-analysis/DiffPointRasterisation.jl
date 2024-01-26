@@ -1,5 +1,6 @@
 module DiffPointRasterisation
 
+using ArgCheck
 using ChunkSplitters
 using FillArrays
 using SimpleUnPack
