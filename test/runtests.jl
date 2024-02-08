@@ -8,52 +8,51 @@ using TestItemRunner
 
 include("../src/testing.jl")
 
+const grid_size_3d = (8, 8, 8)
+const grid_size_2d = (8, 8)
+const batch_size = batch_size_for_test()
+const points = 0.5 .* randn(3, 10)
+const rotation = Array(rand(RotMatrix3))
+const rotation_tangent = Array(rand(RotMatrix3))
+const rotations = stack(rand(RotMatrix3, batch_size))
+const rotation_tangents = stack(rand(RotMatrix3, batch_size))
+const translation_3d = 0.1 .* randn(3)
+const translation_2d = 0.1 .* randn(2)
+const translations_3d = zeros(3, batch_size)
+const translations_2d = zeros(2, batch_size)
+const background = 0.1
+const backgrounds = collect(1:1.0:batch_size)
+const weight = 1.0
+const weights = 10 .* ones(batch_size)
+
 @testset "ChainRules" begin
     @testset "single" begin
-        grid_size = (8, 8, 8)
-        points = 0.3 .* randn(3, 4)
-        rotation = Array(rand(RotMatrix3))
-        rotation_tangent = Array(rand(RotMatrix3))
-        translation = 0.1 .* randn(3)
-        background = 0.1
-        weight = 1.0
-
-        test_rrule(raster, grid_size, points, rotation ⊢ rotation_tangent, translation, background, weight)
+        test_rrule(raster, grid_size_3d, points, rotation ⊢ rotation_tangent, translation_3d, background, weight)
 
         # default arguments
-        test_rrule(raster, grid_size, points, rotation ⊢ rotation_tangent, translation)
+        test_rrule(raster, grid_size_3d, points, rotation ⊢ rotation_tangent, translation_3d)
 
-        grid_size = (8, 8)
-        translation = 0.1 .* randn(2)
 
-        test_rrule(raster_project, grid_size, points, rotation ⊢ rotation_tangent, translation, background, weight)
+        test_rrule(raster_project, grid_size_2d, points, rotation ⊢ rotation_tangent, translation_2d, background, weight)
 
         # default arguments
-        test_rrule(raster_project, grid_size, points, rotation ⊢ rotation_tangent, translation)
+        test_rrule(raster_project, grid_size_2d, points, rotation ⊢ rotation_tangent, translation_2d)
     end
 
     @testset "batch" begin
-        batch_size = 2
-        grid_size = (8, 8, 8)
-        points = 0.3 .* randn(3, 4)
-        rotation = stack(rand(RotMatrix3, batch_size))
-        rotation_tangent = stack(rand(RotMatrix3, batch_size))
-        translation = 0.1 .* randn(3, batch_size)
-        background = fill(0.1, batch_size)
-        weight = fill(1.0, batch_size)
-
-        test_rrule(raster, grid_size, points, rotation ⊢ rotation_tangent, translation, background, weight)
+        test_rrule(raster, grid_size_3d, points, rotations ⊢ rotation_tangents, translations_3d, backgrounds, weights)
 
         # default arguments
-        test_rrule(raster, grid_size, points, rotation ⊢ rotation_tangent, translation)
+        test_rrule(raster, grid_size_3d, points, rotations ⊢ rotation_tangents, translations_3d)
 
-        grid_size = (8, 8)
-        translation = 0.1 .* randn(2, batch_size)
 
-        test_rrule(raster_project, grid_size, points, rotation ⊢ rotation_tangent, translation, background, weight)
+        test_rrule(raster_project, grid_size_2d, points, rotations ⊢ rotation_tangents, translations_2d, backgrounds, weights)
 
         # default arguments
-        test_rrule(raster_project, grid_size, points, rotation ⊢ rotation_tangent, translation)
+        test_rrule(raster_project, grid_size_2d, points, rotations ⊢ rotation_tangents, translations_2d)
+    end
+end
+
     end
 end
 

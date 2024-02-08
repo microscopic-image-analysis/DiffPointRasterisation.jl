@@ -58,48 +58,48 @@ raster(
     grid_size = (5, 5)
 
     points_single_center = zeros(2, 1) 
-    no_rotation = SizedMatrix{2, 2}([1.0;0.0;;0.0;1.0;;])
+    no_rotation = Float64[1;0;;0;1;;]
     no_translation = zeros(2)
     zero_background = 0.0
-    unit_weight = 1.0
+    weight = 4.0
 
-    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
-        0 0 1 0 0
+        0 0 4 0 0
         0 0 0 0 0
         0 0 0 0 0
     ]
     
     points_single_1pix_right = [0.0;0.4;;]
-    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
-        0 0 0 1 0
+        0 0 0 4 0
         0 0 0 0 0
         0 0 0 0 0
     ]
 
     points_single_halfpix_down = [0.2;0.0;;]
-    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
-        0.0 0.0 0.0 0.0 0.0
-        0.0 0.0 0.0 0.0 0.0
-        0.0 0.0 0.5 0.0 0.0
-        0.0 0.0 0.5 0.0 0.0
-        0.0 0.0 0.0 0.0 0.0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 2 0 0
+        0 0 2 0 0
+        0 0 0 0 0
     ]
 
     points_single_halfpix_down_and_right = [0.2;0.2;;]
-    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
-        0.00 0.00 0.00 0.00 0.00
-        0.00 0.00 0.00 0.00 0.00
-        0.00 0.00 0.25 0.25 0.00
-        0.00 0.00 0.25 0.25 0.00
-        0.00 0.00 0.00 0.00 0.00
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 1 1 0
+        0 0 1 1 0
+        0 0 0 0 0
     ]
 end
 
@@ -243,7 +243,7 @@ function _raster!(
     translation::AbstractVector{<:Number},
     background::Number,
     weight::Number,
-) where {N_in, N_out, T}
+) where {N_in, N_out, T<:Number}
     @argcheck size(points, 1) == size(rotation, 1) == size(rotation, 2) == N_in
     @argcheck length(translation) == N_out
 
@@ -251,35 +251,46 @@ function _raster!(
     origin = (-@SVector ones(T, N_out)) - translation
     projection_idxs = SVector(ntuple(identity, N_out))
     scale = SVector{N_out, T}(size(out)) / 2 
-    half = T(0.5)
     shifts=voxel_shifts(Val(N_out))
 
     all_density_idxs = CartesianIndices(out)
 
     for point in eachcol(points)
-        # coordinate of transformed point in output coordinate system
-        # which is defined by the (integer) coordinates of the pixels/voxels
-        # in the output array. 
-        coord = ((rotation * point)[projection_idxs] - origin) .* scale
-        # round to lower integer coordinate ("lower left" neighboring pixel)
-        idx_lower = round.(Int, coord .- half, RoundUp)
-        # distance to lower integer coordinate (distance from "lower left" neighboring pixel)
-        deltas_lower = coord - (idx_lower .- half)
-        # distances to lower (first column) and upper (second column) integer coordinates
-        deltas = [deltas_lower 1 .- deltas_lower]
+        idx_lower, deltas = raster_kernel(point, rotation, origin, scale, projection_idxs)
 
         @inbounds for shift in shifts  # loop over neighboring pixels/voxels
             # index of neighboring pixel/voxel
-            voxel_idx = CartesianIndex(idx_lower.data .+ shift)
+            voxel_idx = idx_lower + CartesianIndex(shift)
             (voxel_idx in all_density_idxs) || continue
-            val = one(T)
-            for i in 1:N_out
-                val *= deltas[i, mod1(shift[i], 2)]  # product of distances along each coordinate axis
-            end
-            out[voxel_idx] += val * weight  # fill neighboring pixel/voxel
+            val = voxel_weight(deltas, shift, projection_idxs, weight)
+            out[voxel_idx] += val  # fill neighboring pixel/voxel
         end
     end
     out
+end
+
+function raster_kernel(point::AbstractVector{T}, rotation, origin, scale, projection_idxs) where {T}
+    rotated_point = rotation * point
+    projected_point = rotated_point[projection_idxs]
+    # coordinate of transformed point in output coordinate system
+    # which is defined by the (integer) coordinates of the pixels/voxels
+    # in the output array. 
+    coord = (projected_point - origin) .* scale
+    # round to lower integer coordinate ("lower left" neighboring pixel)
+    coord_lower_voxel = round.(Int, coord .- T(0.5), RoundUp)
+    # distance to lower integer coordinate (distance from "lower left" neighboring pixel
+    # in units of fractional pixels):
+    deltas_lower = coord - (coord_lower_voxel .- T(0.5))
+    # distances to lower (first column) and upper (second column) integer coordinates
+    deltas = [deltas_lower one(T) .- deltas_lower]
+    CartesianIndex(Tuple(coord_lower_voxel)), deltas
+end
+
+@inline function voxel_weight(deltas, shift, projection_idxs, point_weight)
+    lower_upper = mod1.(shift, 2)
+    delta_idxs = CartesianIndex.(projection_idxs, lower_upper)
+    val = prod(@inbounds @view deltas[delta_idxs]) * point_weight
+    val
 end
 
 function _raster!(
@@ -428,7 +439,7 @@ function _raster_pullback!(
     weight::Number=one(T);
     accumulate_prealloc=false,
     prealloc...,
-) where {N_in, N_out, T}
+) where {N_in, N_out, T<:Number}
     # The strategy followed here is to redo some of the calculations
     # made in the forward pass instead of caching them in the forward
     # pass and reusing them here.
@@ -515,7 +526,7 @@ function _raster_pullback!(
     background::AbstractVector{<:Number}=zeros(T, size(rotation, 3)),
     weight::AbstractVector{<:Number}=ones(T, size(rotation, 3));
     prealloc...
-) where {N_in, T}
+) where {N_in, T<:Number}
     out_batch_dim = ndims(ds_dout)
     batch_axis = axes(ds_dout, out_batch_dim)
     @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
@@ -645,7 +656,7 @@ end
 
 return a N-tuple containing the bit-representation of k
 """
-digitstuple(k, ::Val{N}) where {N} = ntuple(i -> k>>(i-1) % 2, N)
+digitstuple(k, ::Val{N}, int_type=Int64) where {N} = ntuple(i -> int_type(k>>(i-1) % 2), N)
 
 @testitem "digitstuple" begin
     @test DiffPointRasterisation.digitstuple(5, Val(3)) == (1, 0, 1) 
