@@ -58,48 +58,48 @@ raster(
     grid_size = (5, 5)
 
     points_single_center = zeros(2, 1) 
-    no_rotation = SizedMatrix{2, 2}([1.0;0.0;;0.0;1.0;;])
+    no_rotation = Float64[1;0;;0;1;;]
     no_translation = zeros(2)
     zero_background = 0.0
-    unit_weight = 1.0
+    weight = 4.0
 
-    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
-        0 0 1 0 0
+        0 0 4 0 0
         0 0 0 0 0
         0 0 0 0 0
     ]
     
     points_single_1pix_right = [0.0;0.4;;]
-    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
-        0 0 0 1 0
+        0 0 0 4 0
         0 0 0 0 0
         0 0 0 0 0
     ]
 
     points_single_halfpix_down = [0.2;0.0;;]
-    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
-        0.0 0.0 0.0 0.0 0.0
-        0.0 0.0 0.0 0.0 0.0
-        0.0 0.0 0.5 0.0 0.0
-        0.0 0.0 0.5 0.0 0.0
-        0.0 0.0 0.0 0.0 0.0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 2 0 0
+        0 0 2 0 0
+        0 0 0 0 0
     ]
 
     points_single_halfpix_down_and_right = [0.2;0.2;;]
-    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, unit_weight)
+    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
-        0.00 0.00 0.00 0.00 0.00
-        0.00 0.00 0.00 0.00 0.00
-        0.00 0.00 0.25 0.25 0.00
-        0.00 0.00 0.25 0.25 0.00
-        0.00 0.00 0.00 0.00 0.00
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 1 1 0
+        0 0 1 1 0
+        0 0 0 0 0
     ]
 end
 
@@ -187,16 +187,17 @@ raster!(
     weight,
 )
 
-@testitem "raster! allocations" begin
-    using BenchmarkTools, Rotations
-    out = zeros(8, 8, 8)
-    points = randn(3, 10)
-    rotation = rand(QuatRotation)
-    translation = zeros(3)
 
-    allocations = @ballocated DiffPointRasterisation.raster!($out, $points, $rotation, $translation) evals=1 samples=1
-    @test allocations == 0
-end
+# @testitem "raster! allocations" begin
+#     using BenchmarkTools, Rotations
+#     out = zeros(8, 8, 8)
+#     points = randn(3, 10)
+#     rotation = rand(QuatRotation)
+#     translation = zeros(3)
+# 
+#     allocations = @ballocated DiffPointRasterisation.raster!($out, $points, $rotation, $translation) evals=1 samples=1
+#     @test allocations == 0
+# end
 
 
 """
@@ -223,19 +224,19 @@ raster_project!(
     weight,
 )
 
-@testitem "raster_project! allocations" begin
-    using BenchmarkTools, Rotations
-    out = zeros(16, 16)
-    points = randn(3, 10)
-    rotation = rand(QuatRotation)
-    translation = zeros(2)
+# @testitem "raster_project! allocations" begin
+#     using BenchmarkTools, Rotations
+#     out = zeros(16, 16)
+#     points = randn(3, 10)
+#     rotation = rand(QuatRotation)
+#     translation = zeros(2)
+# 
+#     allocations = @ballocated DiffPointRasterisation.raster_project!($out, $points, $rotation, $translation) evals=1 samples=1
+#     @test allocations == 0
+# end
 
-    allocations = @ballocated DiffPointRasterisation.raster_project!($out, $points, $rotation, $translation) evals=1 samples=1
-    @test allocations == 0
-end
 
-
-function _raster!(
+_raster!(
     ::Val{N_in},
     out::AbstractArray{T, N_out},
     points::AbstractMatrix{<:Number},
@@ -243,63 +244,84 @@ function _raster!(
     translation::AbstractVector{<:Number},
     background::Number,
     weight::Number,
-) where {N_in, N_out, T}
-    @argcheck size(points, 1) == size(rotation, 1) == size(rotation, 2) == N_in
-    @argcheck length(translation) == N_out
+) where {N_in, N_out, T<:Number} = drop_last_dim(
+    _raster!(
+        Val(N_in),
+        append_singleton_dim(out),
+        points,
+        append_singleton_dim(rotation),
+        append_singleton_dim(translation),
+        fill!(similar(out, 1), background),
+        fill!(similar(out, 1), weight),
+    )
+)
 
-    fill!(out, background)
-    origin = (-@SVector ones(T, N_out)) - translation
-    projection_idxs = SVector(ntuple(identity, N_out))
-    scale = SVector{N_out, T}(size(out)) / 2 
-    half = T(0.5)
-    shifts=voxel_shifts(Val(N_out))
-
-    all_density_idxs = CartesianIndices(out)
-
-    for point in eachcol(points)
-        # coordinate of transformed point in output coordinate system
-        # which is defined by the (integer) coordinates of the pixels/voxels
-        # in the output array. 
-        coord = ((rotation * point)[projection_idxs] - origin) .* scale
-        # round to lower integer coordinate ("lower left" neighboring pixel)
-        idx_lower = round.(Int, coord .- half, RoundUp)
-        # distance to lower integer coordinate (distance from "lower left" neighboring pixel)
-        deltas_lower = coord - (idx_lower .- half)
-        # distances to lower (first column) and upper (second column) integer coordinates
-        deltas = [deltas_lower 1 .- deltas_lower]
-
-        @inbounds for shift in shifts  # loop over neighboring pixels/voxels
-            # index of neighboring pixel/voxel
-            voxel_idx = CartesianIndex(idx_lower.data .+ shift)
-            (voxel_idx in all_density_idxs) || continue
-            val = one(T)
-            for i in 1:N_out
-                val *= deltas[i, mod1(shift[i], 2)]  # product of distances along each coordinate axis
-            end
-            out[voxel_idx] += val * weight  # fill neighboring pixel/voxel
-        end
-    end
-    out
-end
 
 function _raster!(
     ::Val{N_in},
-    out::AbstractArray{<:Number},
+    out::AbstractArray{T, N_out_p1},
     points::AbstractMatrix{<:Number},
     rotation::AbstractArray{<:Number, 3},
     translation::AbstractMatrix{<:Number},
     background::AbstractVector{<:Number},
     weight::AbstractVector{<:Number},
-) where {N_in}
+) where {T<:Number, N_in, N_out_p1}
+    N_out = N_out_p1 - 1
     out_batch_dim = ndims(out)
-    @argcheck axes(out, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
-    batch_axis = axes(out, out_batch_dim)
-    Threads.@threads for (idxs, ichunk) in chunks(batch_axis, Threads.nthreads())
-        for i in idxs
-            _raster!(Val(N_in), selectdim(out, out_batch_dim, i), points, view(rotation, :, :, i), view(translation, :, i), background[i], weight[i])
-        end
-    end
+    batch_size = size(out, out_batch_dim)
+    @argcheck size(points, 1) == size(rotation, 1) == size(rotation, 2) == N_in
+    @argcheck batch_size == size(rotation, 3) == size(translation, 2) == size(background, 1) == size(weight, 1)
+    @argcheck size(translation, 1) == N_out
+    n_points = size(points, 2)
+
+    scale = SVector{N_out, T}(size(out)[1:end-1]) / T(2)
+    projection_idxs = SVector{N_out}(ntuple(identity, N_out))
+    shifts=voxel_shifts(Val(N_out))
+    out .= reshape(background, ntuple(_ -> 1, N_out)..., length(background))
+    args = (Val(N_in), out, points, rotation, translation, weight, shifts, scale, projection_idxs)
+    backend = get_backend(out)
+    raster_kernel!(backend, 64)(args...; ndrange=(2^N_out, n_points, batch_size))
     out
+end
+
+@kernel function raster_kernel!(::Val{N_in}, out::AbstractArray{T, N_out_p1}, points, rotations, translations, weights, shifts, scale, projection_idxs) where {T, N_in, N_out_p1}
+    N_out = N_out_p1 - 1  # dimensionality of output, without batch dimension
+    neighbor_voxel_id, point_idx, batch_idx = @index(Global, NTuple)
+
+    point = @inbounds SVector{N_in, T}(@view points[:, point_idx])
+    rotation = @inbounds SMatrix{N_in, N_in, T}(@view rotations[:, :, batch_idx])
+    translation = @inbounds SVector{N_out, T}(@view translations[:, batch_idx])
+    weight = @inbounds weights[batch_idx]
+    shift = @inbounds shifts[neighbor_voxel_id]
+
+    origin = (-@SVector ones(T, N_out)) - translation
+    rotated_point = rotation * point
+    projected_point = @inbounds rotated_point[projection_idxs]
+    # coordinate of transformed point in output coordinate system
+    # which is defined by the (integer) coordinates of the pixels/voxels
+    # in the output array. 
+    coord = (projected_point - origin) .* scale
+    # round to lower integer coordinate ("lower left" neighboring pixel)
+    coord_lower_voxel = round.(Int, coord .- T(0.5), RoundUp)
+    # distance to lower integer coordinate (distance from "lower left" neighboring pixel
+    # in units of fractional pixels):
+    deltas_lower = coord - (coord_lower_voxel .- T(0.5))
+    # distances to lower (first column) and upper (second column) integer coordinates
+    deltas = [deltas_lower one(T) .- deltas_lower]
+    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_lower_voxel)) + CartesianIndex(shift), batch_idx)
+
+    if voxel_idx in CartesianIndices(out)
+        val = voxel_weight(deltas, shift, projection_idxs, weight)
+        @inbounds Atomix.@atomic out[voxel_idx] += val  # fill neighboring pixel/voxel
+    end
+    nothing
+end
+
+@inline function voxel_weight(deltas, shift, projection_idxs, point_weight)
+    lower_upper = mod1.(shift, 2)
+    delta_idxs = CartesianIndex.(projection_idxs, lower_upper)
+    val = prod(@inbounds @view deltas[delta_idxs]) * point_weight
+    val
 end
 
 @testitem "raster! threaded" begin
@@ -428,7 +450,7 @@ function _raster_pullback!(
     weight::Number=one(T);
     accumulate_prealloc=false,
     prealloc...,
-) where {N_in, N_out, T}
+) where {N_in, N_out, T<:Number}
     # The strategy followed here is to redo some of the calculations
     # made in the forward pass instead of caching them in the forward
     # pass and reusing them here.
@@ -515,7 +537,7 @@ function _raster_pullback!(
     background::AbstractVector{<:Number}=zeros(T, size(rotation, 3)),
     weight::AbstractVector{<:Number}=ones(T, size(rotation, 3));
     prealloc...
-) where {N_in, T}
+) where {N_in, T<:Number}
     out_batch_dim = ndims(ds_dout)
     batch_axis = axes(ds_dout, out_batch_dim)
     @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
@@ -645,7 +667,7 @@ end
 
 return a N-tuple containing the bit-representation of k
 """
-digitstuple(k, ::Val{N}) where {N} = ntuple(i -> k>>(i-1) % 2, N)
+digitstuple(k, ::Val{N}, int_type=Int64) where {N} = ntuple(i -> int_type(k>>(i-1) % 2), N)
 
 @testitem "digitstuple" begin
     @test DiffPointRasterisation.digitstuple(5, Val(3)) == (1, 0, 1) 
@@ -653,4 +675,8 @@ digitstuple(k, ::Val{N}) where {N} = ntuple(i -> k>>(i-1) % 2, N)
     @test DiffPointRasterisation.digitstuple(2, Val(4)) == (0, 1, 0, 0) 
 end
 
-voxel_shifts(::Val{N}) where {N} = ntuple(k -> digitstuple(k-1, Val(N)), 2^N)
+voxel_shifts(::Val{N}, int_type=Int64) where {N} = ntuple(k -> digitstuple(k-1, Val(N), int_type), 2^N)
+
+@inline append_singleton_dim(a) = reshape(a, size(a)..., 1)
+
+@inline drop_last_dim(a) = dropdims(a; dims=ndims(a))

@@ -1,4 +1,5 @@
 .vscode
 /Manifest.toml
+experiments/*
 docs/Manifest.toml
 docs/build/
