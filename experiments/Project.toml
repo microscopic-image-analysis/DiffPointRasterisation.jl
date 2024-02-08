@@ -1,0 +1,6 @@
+[deps]
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+DiffPointRasterisation = "f984992d-3c45-4382-99a1-cf20f5c47c61"
+KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
+Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
+StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
