@@ -1,8 +1,10 @@
 module DiffPointRasterisation
 
 using ArgCheck
+using Atomix
 using ChunkSplitters
 using FillArrays
+using KernelAbstractions
 using SimpleUnPack
 using StaticArrays
 using TestItems

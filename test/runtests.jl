@@ -1,5 +1,6 @@
 using ChainRulesCore
 using ChainRulesTestUtils
+using CUDA
 using DiffPointRasterisation
 using Rotations
 using StaticArrays
@@ -53,7 +54,23 @@ const weights = 10 .* ones(batch_size)
     end
 end
 
+
+if CUDA.functional()
+    CUDA.allowscalar(false)
+    @testset "CUDA" begin
+        args = (grid_size_3d, points, rotations, translations_3d, backgrounds, weights)
+        out = raster(args...)
+        try
+            out_cu = run_cuda(raster, args...)
+        catch InvalidIRError
+            # fail test if this does not raise anymore
+            @test false broken=true
+        else
+            @test isa(out_cu, CuArray)
+            @test Array(out_cu) ≈ out
+        end
     end
 end
+
 
 @run_package_tests
