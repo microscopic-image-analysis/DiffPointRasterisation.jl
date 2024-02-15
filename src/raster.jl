@@ -295,6 +295,46 @@ end
     shift = @inbounds shifts[neighbor_voxel_id]
     origin = (-@SVector ones(T, N_out)) - translation
 
+    coord_reference_voxel, deltas = reference_coordinate_and_deltas(
+        point,
+        rotation,
+        projection_idxs,
+        origin,
+        scale,
+    )
+    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
+
+    if voxel_idx in CartesianIndices(out)
+        val = voxel_weight(deltas, shift, projection_idxs, weight)
+        @inbounds Atomix.@atomic out[voxel_idx] += val
+    end
+    nothing
+end
+
+"""
+    reference_coordinate_and_deltas(point, rotation, projection_idxs, origin, scale)
+    
+Return 
+ - The cartesian coordinate of the voxel of an N-dimensional rectangular 
+   grid that is the one closest to the origin, out of the 2^N voxels that are next
+   neighbours of the (N-dimensional) `point`
+ - A Nx2 array containing coordinate-wise distances of the `scale`d `point` to the
+   voxel that is
+   * closest to the origin (out of the 2^N next neighbors) in the first column
+   * furthest from the origin (out of the 2^N next neighbors) in the second column.
+
+The grid is implicitely assumed to discretize the hypercube ranging from (-1, 1)
+in each dimension.
+Before `point` is discretized into this grid, it is first translated by 
+`-origin` and then scaled by `scale`.
+"""
+@inline function reference_coordinate_and_deltas(
+    point::AbstractVector{T},
+    rotation,
+    projection_idxs,
+    origin,
+    scale,
+) where {T}
     rotated_point = rotation * point
     projected_point = @inbounds rotated_point[projection_idxs]
     # coordinate of transformed point in output coordinate system
@@ -308,15 +348,7 @@ end
     deltas_lower = coord - (coord_reference_voxel .- T(0.5))
     # distances to lower (first column) and upper (second column) integer coordinates
     deltas = [deltas_lower one(T) .- deltas_lower]
-    # voxel filled by this kernel instance is
-    # coordinate of reference voxel plus shift
-    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
-
-    if voxel_idx in CartesianIndices(out)
-        val = voxel_weight(deltas, shift, projection_idxs, weight)
-        @inbounds Atomix.@atomic out[voxel_idx] += val
-    end
-    nothing
+    coord_reference_voxel, deltas
 end
 
 @inline function voxel_weight(deltas, shift, projection_idxs, point_weight)

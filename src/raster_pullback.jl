@@ -88,7 +88,6 @@ function _raster_pullback!(
     origin = (-@SVector ones(T, N_out)) - translation
     projection_idxs = SVector(ntuple(identity, N_out))
     scale = SVector{N_out, T}(size(ds_dout)) / 2 
-    half = T(0.5)
     shifts=voxel_shifts(Val(N_out))
     all_density_idxs = CartesianIndices(ds_dout)
 
@@ -100,15 +99,18 @@ function _raster_pullback!(
     # loop over points
     for (pt_idx, point) in enumerate(eachcol(points))
         point = SVector{N_in, T}(point)
-        coord::SVector{N_out, T} = ((rotation * point)[projection_idxs] - origin) .* scale
-        idx_lower = round.(Int, coord .- half, RoundUp)
-        deltas_lower = coord - (idx_lower .- half)
-        deltas = [deltas_lower 1 .- deltas_lower]
+        coord_reference_voxel, deltas = reference_coordinate_and_deltas(
+            point,
+            rotation,
+            projection_idxs,
+            origin,
+            scale,
+        )
 
         ds_dcoord = @SVector zeros(T, N_out)
         # loop over voxels that are affected by point
         for shift in shifts
-            voxel_idx = CartesianIndex(idx_lower.data .+ shift)
+            voxel_idx = CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift)
             (voxel_idx in all_density_idxs) || continue
 
             val = one(T)
