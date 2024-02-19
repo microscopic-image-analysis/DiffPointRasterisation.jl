@@ -280,7 +280,9 @@ function _raster!(
     out .= reshape(background, ntuple(_ -> 1, N_out)..., length(background))
     args = (Val(N_in), out, points, rotation, translation, weight, shifts, scale, projection_idxs)
     backend = get_backend(out)
-    raster_kernel!(backend, 64)(args...; ndrange=(2^N_out, n_points, batch_size))
+    ndrange = (2^N_out, n_points, batch_size)
+    workgroup_size = 1024 
+    raster_kernel!(backend, workgroup_size, ndrange)(args...)
     out
 end
 
@@ -366,7 +368,7 @@ end
 
     out = zeros(8, 8, 8, batch_size)
     out_batched = zeros(8, 8, 8, batch_size)
-    points = 0.3 .* randn(3, 10)
+    points = 0.3 .* randn(3, 1000)
     rotation = stack(rand(QuatRotation, batch_size))
     translation = zeros(3, batch_size)
     background = zeros(batch_size)
@@ -389,7 +391,7 @@ end
 
     out = zeros(16, 16, batch_size)
     out_batched = zeros(16, 16, batch_size)
-    points = 0.3 .* randn(3, 10)
+    points = 0.3 .* randn(3, 1000)
     rotation = stack(rand(QuatRotation, batch_size))
     translation = zeros(2, batch_size)
     background = zeros(batch_size)

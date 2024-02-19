@@ -66,6 +66,210 @@ raster_project_pullback!(
     prealloc...
 )
 
+@kernel function raster_pullback_kernel!(
+    ::Val{N_in},
+    ds_dout::AbstractArray{T, N_out_p1},
+    @Const(points),
+    @Const(rotations),
+    @Const(translations),
+    @Const(weights),
+    @Const(shifts),
+    @Const(scale),
+    @Const(projection_idxs),
+    # outputs:
+    ds_dpoints,
+    ds_dprojection_rotation,
+    ds_dtranslation,
+    ds_dweight,
+
+) where {T, N_in, N_out_p1}
+    @uniform N_out = N_out_p1 - 1  # dimensionality of output, without batch dimension
+    neighbor_voxel_id, point_idx, batch_idx = @index(Global, NTuple)
+    s, _, b = @index(Local, NTuple)
+    @uniform n_voxel, points_per_workgroup, batchsize_per_workgroup = @groupsize()
+    @assert points_per_workgroup == 1
+    @assert n_voxel == 2^N_out
+
+    ds_dpoint_rot = @localmem T (N_out, n_voxel, batchsize_per_workgroup)
+    ds_dweight_private = @private T 1
+
+    point = @inbounds SVector{N_in, T}(@view points[:, point_idx])
+    rotation = @inbounds SMatrix{N_in, N_in, T}(@view rotations[:, :, batch_idx])
+    translation = @inbounds SVector{N_out, T}(@view translations[:, batch_idx])
+    weight = @inbounds weights[batch_idx]
+    shift = @inbounds shifts[neighbor_voxel_id]
+    origin = (-@SVector ones(T, N_out)) - translation
+
+    coord_reference_voxel, deltas = reference_coordinate_and_deltas(
+        point,
+        rotation,
+        projection_idxs,
+        origin,
+        scale,
+    )
+    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
+
+
+    if voxel_idx in CartesianIndices(ds_dout)
+        @inbounds ds_dweight_private[1] = voxel_weight(
+            deltas,
+            shift,
+            projection_idxs,
+            ds_dout[voxel_idx],
+        )
+
+        factor = ds_dout[voxel_idx] * weight
+        ds_dcoord_part = SVector(factor .* ntuple(n -> interpolation_weight(n, N_out, deltas, shift), N_out))
+        @inbounds ds_dpoint_rot[:, s, b] = ds_dcoord_part .* scale
+    else
+        @inbounds ds_dweight_private[1] = zero(T)
+        @inbounds ds_dpoint_rot[:, s, b] .= zero(T)
+    end
+
+    @inbounds Atomix.@atomic ds_dweight[batch_idx] += ds_dweight_private[1]
+
+    # parallel summation of ds_dpoint_rot over neighboring-voxel dimension
+    @private stride = 1
+    @inbounds while stride < n_voxel
+        @synchronize()
+        idx = 2 * stride * (s - 1) + 1
+        dim = 1
+        while dim <= N_out
+            if idx <= n_voxel
+                other_val = if idx + stride <= n_voxel
+                    ds_dpoint_rot[dim, idx + stride, b]
+                else
+                    zero(T)
+                end
+                ds_dpoint_rot[dim, idx, b] += other_val
+            end
+            dim += 1
+        end
+        stride *= 2
+    end
+
+    @synchronize()
+    i = @index(Local, Linear)
+    while i <= N_out
+        val = ds_dpoint_rot[i, 1, b]
+        @inbounds Atomix.@atomic ds_dtranslation[i, batch_idx] += val
+        coef = ds_dpoint_rot[i, 1, b]
+        j = 1
+        while j <= N_in
+            val = coef * point[j]
+            @inbounds Atomix.@atomic ds_dprojection_rotation[i, j, batch_idx] += val 
+            j += 1
+        end
+        i += prod(@groupsize())
+    end
+
+    # parallel summation of ds_dpoint_rot over batch dimension
+    stride = 1
+    @inbounds while stride < batchsize_per_workgroup
+        @synchronize()
+        idx = 2 * stride * (b - 1) + 1
+        dim = 1
+        while dim <= N_out
+            if idx <= batchsize_per_workgroup
+                other_val = if idx + stride <= batchsize_per_workgroup
+                    ds_dpoint_rot[dim, 1, idx + stride]
+                else
+                    zero(T)
+                end
+                ds_dpoint_rot[dim, 1, idx] += other_val
+            end
+            dim += 1
+        end
+        stride *= 2
+    end
+
+    @synchronize()
+    i = @index(Local, Linear)
+    while i <= N_in
+        val = zero(T)
+        j = 1
+        while j <= N_out
+            val += rotation[j, i] * ds_dpoint_rot[j, 1, 1]
+            j += 1
+        end
+        @inbounds ds_dpoints[i, point_idx] = val
+        i += prod(@groupsize())
+    end
+
+    nothing
+end
+
+
+function _raster_pullback_ka!(
+    ::Val{N_in},
+    ds_dout::AbstractArray{T, N_out_p1},
+    points::AbstractMatrix{<:Number},
+    rotation::AbstractArray{<:Number, 3},
+    translation::AbstractMatrix{<:Number},
+    # TODO: for some reason type inference fails if the following
+    # two arrays are FillArrays... 
+    background::AbstractVector{<:Number}=zeros(T, size(rotation, 3)),
+    weight::AbstractVector{<:Number}=ones(T, size(rotation, 3)),
+) where {T<:Number, N_in, N_out_p1}
+    N_out = N_out_p1 - 1
+    out_batch_dim = ndims(ds_dout)
+    batch_axis = axes(ds_dout, out_batch_dim)
+    n_points = size(points, 2)
+    batch_size = length(batch_axis)
+    @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
+
+    scale = SVector{N_out, T}(size(ds_dout)[1:end-1]) / T(2)
+    projection_idxs = SVector{N_out}(ntuple(identity, N_out))
+    shifts=voxel_shifts(Val(N_out))
+
+    ds_dpoints = similar(points)
+    ds_dprojection_rotation = similar(rotation, (N_out, N_in, batch_size))
+    ds_dtranslation = similar(translation)
+    ds_dweight = similar(weight)
+
+    args = (Val(N_in), ds_dout, points, rotation, translation, weight, shifts, scale, projection_idxs, ds_dpoints, ds_dprojection_rotation, ds_dtranslation, ds_dweight)
+
+    backend = get_backend(ds_dout)
+    ndrange = (2^N_out, n_points, batch_size)
+    workgroup_size = (2^N_out, 1, 1024 ÷ (2^N_out))
+
+    raster_pullback_kernel!(backend, workgroup_size, ndrange)(args...)
+
+    ds_drotation = N_out == N_in ? ds_dprojection_rotation : vcat(ds_dprojection_rotation, KernelAbstractions.zeros(backend, T, 1, N_in, batch_size))
+    ds_dbackground = dropdims(sum(ds_dout; dims=1:N_out); dims=1:N_out)
+    synchronize(backend)
+
+    return (;
+        points=ds_dpoints,
+        rotation=ds_drotation,
+        translation=ds_dtranslation,
+        background=ds_dbackground,
+        weight=ds_dweight,
+    )
+end
+
+@testitem "_raster_pullback_ka!" begin
+    using BenchmarkTools, Rotations
+    include("testing.jl")
+
+    batch_size = batch_size_for_test()
+
+    ds_dout = randn(8, 8, 8, batch_size)
+    points = 0.3 .* randn(3, 1000)
+    rotation = stack(rand(QuatRotation, batch_size))
+    translation = zeros(3, batch_size)
+    background = zeros(batch_size)
+    weight = ones(batch_size)
+
+    args = (Val(3), ds_dout, points, rotation, translation, background, weight)
+    ds_dargs_threaded = DiffPointRasterisation._raster_pullback!(args...)
+    ds_dargs_ka = DiffPointRasterisation._raster_pullback_ka!(args...)
+
+    for prop in propertynames(ds_dargs_threaded)
+        @test getproperty(ds_dargs_ka, prop) ≈ getproperty(ds_dargs_threaded, prop)
+    end
+end
+
 
 function _raster_pullback!(
     ::Val{N_in},
@@ -113,11 +317,12 @@ function _raster_pullback!(
             voxel_idx = CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift)
             (voxel_idx in all_density_idxs) || continue
 
-            val = one(T)
-            for i in 1:N_out
-                val *= deltas[i, mod1(shift[i], 2)]  # product of distances along each coordinate axis
-            end
-            ds_dweight += ds_dout[voxel_idx] * val
+            ds_dweight += voxel_weight(
+                deltas,
+                shift,
+                projection_idxs,
+                ds_dout[voxel_idx],
+            )
 
             factor = ds_dout[voxel_idx] * weight
             # loop over dimensions of point
@@ -194,7 +399,7 @@ end
 
     batch_size = batch_size_for_test()
 
-    ds_dout = zeros(8, 8, 8, batch_size)
+    ds_dout = randn(8, 8, 8, batch_size)
     points = 0.3 .* randn(3, 10)
     rotation = stack(rand(QuatRotation, batch_size))
     translation = zeros(3, batch_size)

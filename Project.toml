@@ -16,9 +16,11 @@ TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
 
 [weakdeps]
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
+CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 
 [extensions]
 DiffPointRasterisationChainRulesCoreExt = "ChainRulesCore"
+DiffPointRasterisationCUDAExt = "CUDA"
 
 [compat]
 ChunkSplitters = "2"
