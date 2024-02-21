@@ -361,47 +361,31 @@ end
 end
 
 @testitem "raster! batched" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    out = zeros(D.grid_size_3d..., D.batch_size)
+    out_batched = zeros(D.grid_size_3d..., D.batch_size)
 
-    out = zeros(8, 8, 8, batch_size)
-    out_batched = zeros(8, 8, 8, batch_size)
-    points = 0.3 .* randn(3, 1000)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(3, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    for (out_i, args...) in zip(eachslice(out, dims=4), eachslice(rotation, dims=3), eachcol(translation), background, weight)
-        raster!(out_i, points, args...)
+    for (out_i, args...) in zip(eachslice(out, dims=4), eachslice(D.rotations, dims=3), eachcol(D.translations_3d), D.backgrounds, D.weights)
+        raster!(out_i, D.more_points, args...)
     end
 
-    DiffPointRasterisation.raster!(out_batched, points, rotation, translation, background, weight)
+    DiffPointRasterisation.raster!(out_batched, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights)
 
     @test out_batched ≈ out
 end
 
 @testitem "raster_project! batched" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    out = zeros(D.grid_size_2d..., D.batch_size)
+    out_batched = zeros(D.grid_size_2d..., D.batch_size)
 
-    out = zeros(16, 16, batch_size)
-    out_batched = zeros(16, 16, batch_size)
-    points = 0.3 .* randn(3, 1000)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(2, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    for (out_i, args...) in zip(eachslice(out, dims=3), eachslice(rotation, dims=3), eachcol(translation), background, weight)
-        DiffPointRasterisation.raster_project!(out_i, points, args...)
+    for (out_i, args...) in zip(eachslice(out, dims=3), eachslice(D.rotations, dims=3), eachcol(D.translations_2d), D.backgrounds, D.weights)
+        DiffPointRasterisation.raster_project!(out_i, D.more_points, args...)
     end
 
-    DiffPointRasterisation.raster_project!(out_batched, points, rotation, translation, background, weight)
+    DiffPointRasterisation.raster_project!(out_batched, D.more_points, D.rotations, D.translations_2d, D.backgrounds, D.weights)
 
     @test out_batched ≈ out
 end

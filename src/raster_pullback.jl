@@ -394,23 +394,15 @@ function _raster_pullback!(
 end
 
 @testitem "raster_pullback! threaded" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    ds_dout = randn(D.grid_size_3d..., D.batch_size)
 
-    ds_dout = randn(8, 8, 8, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(3, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    ds_dargs_threaded = DiffPointRasterisation.raster_pullback!(ds_dout, points, rotation, translation, background, weight)
+    ds_dargs_threaded = DiffPointRasterisation.raster_pullback!(ds_dout, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights)
 
     ds_dpoints = Matrix{Float64}[]
-    for i in 1:batch_size
-        ds_dargs_i = @views raster_pullback!(ds_dout[:, :, :, i], points, rotation[:, :, i], translation[:, i], background[i], weight[i])
+    for i in 1:D.batch_size
+        ds_dargs_i = @views raster_pullback!(ds_dout[:, :, :, i], D.more_points, D.rotations[:, :, i], D.translations_3d[:, i], D.backgrounds[i], D.weights[i])
         push!(ds_dpoints, ds_dargs_i.points)
         @views begin
             @test ds_dargs_threaded.rotation[:, :, i] ≈ ds_dargs_i.rotation
@@ -423,23 +415,15 @@ end
 end
 
 @testitem "raster_project_pullback! threaded" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    ds_dout = zeros(D.grid_size_2d..., D.batch_size)
 
-    ds_dout = zeros(16, 16, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(2, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    ds_dargs_threaded = DiffPointRasterisation.raster_project_pullback!(ds_dout, points, rotation, translation, background, weight)
+    ds_dargs_threaded = DiffPointRasterisation.raster_project_pullback!(ds_dout, D.more_points, D.rotations, D.translations_2d, D.backgrounds, D.weights)
 
     ds_dpoints = Matrix{Float64}[]
-    for i in 1:batch_size
-        ds_dargs_i = @views raster_project_pullback!(ds_dout[:, :, i], points, rotation[:, :, i], translation[:, i], background[i], weight[i])
+    for i in 1:D.batch_size
+        ds_dargs_i = @views raster_project_pullback!(ds_dout[:, :, i], D.more_points, D.rotations[:, :, i], D.translations_2d[:, i], D.backgrounds[i], D.weights[i])
         push!(ds_dpoints, ds_dargs_i.points)
         @views begin
             @test ds_dargs_threaded.rotation[:, :, i] ≈ ds_dargs_i.rotation
