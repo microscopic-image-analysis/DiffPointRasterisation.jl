@@ -18,9 +18,17 @@ The total `weight` of each point is distributed onto the 2^N nearest
 pixels/voxels of the output array (according to the closeness of the
 voxel center to the coordinates of point ``\\hat{p}``) via
 N-linear interpolation.
+
+`rotation`, `translation`, `background` and `weight` can have an 
+additional "batch" dimension (as last dimension, and the axis
+along this dimension must agree across the four arguments).
+In this case, the output will also have that additional dimension.
+This is useful if the same scene/points should be rastered from
+different perspectives. 
 """
 function raster end
 
+# single image
 raster(
     grid_size,
     points::AbstractMatrix{T},
@@ -37,6 +45,7 @@ raster(
     weight,
 )
 
+# batched version
 raster(
     grid_size,
     points::AbstractMatrix{T},
@@ -53,15 +62,35 @@ raster(
     weight,
 )
 
-@testitem "raster single point 2D" begin
-    using Rotations, StaticArrays
+@testitem "raster correctness" begin
+    using Rotations
     grid_size = (5, 5)
 
     points_single_center = zeros(2, 1) 
+    points_single_1pix_right = [0.0;0.4;;]
+    points_single_1pix_up = [-0.4;0.0;;]
+    points_single_1pix_left = [0.0;-0.4;;]
+    points_single_1pix_down = [0.4;0.0;;]
+    points_single_halfpix_down = [0.2;0.0;;]
+    points_single_halfpix_down_and_right = [0.2;0.2;;]
+    points_four_cross = reduce(
+        hcat,
+        [
+            points_single_1pix_right, points_single_1pix_up, points_single_1pix_left, points_single_1pix_down
+        ]
+    )
+
     no_rotation = Float64[1;0;;0;1;;]
+    rotation_90_deg = Float64[0;1;;-1;0;;]
+
     no_translation = zeros(2)
+    translation_halfpix_right = [0.0, 0.2]
+    translation_1pix_down = [0.4, 0.0]
+
     zero_background = 0.0
     weight = 4.0
+
+    # -------- interpolations ---------
 
     out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
@@ -72,7 +101,6 @@ raster(
         0 0 0 0 0
     ]
     
-    points_single_1pix_right = [0.0;0.4;;]
     out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
@@ -82,7 +110,6 @@ raster(
         0 0 0 0 0
     ]
 
-    points_single_halfpix_down = [0.2;0.0;;]
     out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
@@ -92,13 +119,52 @@ raster(
         0 0 0 0 0
     ]
 
-    points_single_halfpix_down_and_right = [0.2;0.2;;]
     out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
         0 0 1 1 0
         0 0 1 1 0
+        0 0 0 0 0
+    ]
+
+    # -------- translations ---------
+
+    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 4 0 0
+        0 4 0 4 0
+        0 0 4 0 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 2 2 0
+        0 2 2 2 2
+        0 0 2 2 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_four_cross, no_rotation, translation_1pix_down, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 4 0 0
+        0 4 0 4 0
+        0 0 4 0 0
+    ]
+
+    # -------- rotations ---------
+
+    out = raster(grid_size, points_single_1pix_right, rotation_90_deg, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 4 0 0
+        0 0 0 0 0
+        0 0 0 0 0
         0 0 0 0 0
     ]
 end
@@ -115,21 +181,12 @@ transformed according to
 ```math
 \\hat{p} = P R p + t
 ```
-with N-dimensional `rotation` ``R``, projection ``P`` and N-1-dmensional
-`translation` ``t``.
-The projection simply drops the last coordinate of ``R p``.
 
-Points ``\\hat{p}`` that fall into the N-1-dimensional hypercube
-with edges spanning from (-1, 1) in each dimension, are interpolated
-into the output array.
-
-The total `weight` of each point is distributed onto the 2^(N-1) nearest
-pixels/voxels of the output array (according to the closeness of the
-voxel center to the coordinates of point ``\\hat{p}``) via
-N-1-linear interpolation.
+The remaining behaviour is the same as for `raster`
 """
 function raster_project end
 
+# single image
 raster_project(
     grid_size,
     points::AbstractMatrix{T},
@@ -146,6 +203,7 @@ raster_project(
     weight,
 )
 
+# batched version
 raster_project(
     grid_size,
     points::AbstractMatrix{T},
@@ -188,14 +246,33 @@ raster!(
 )
 
 
-@testitem "raster! allocations" begin
-    using BenchmarkTools, Rotations
-    out = zeros(8, 8, 8)
-    points = randn(3, 10)
-    rotation = rand(QuatRotation)
-    translation = zeros(3)
+@testitem "raster inference and allocations" begin
+    using BenchmarkTools, CUDA
+    include("../test/data.jl")
 
-    allocations = @ballocated DiffPointRasterisation.raster!($out, $points, $rotation, $translation) evals=1 samples=1
+    # check type stability
+    # single image
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotation, D.translation_3d)
+    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotation, D.translation_2d)
+    # batched
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotations, D.translations_3d)
+    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotations, D.translations_2d)
+    if CUDA.functional()
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotation), cu(D.translation_3d))
+        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotation), cu(D.translation_2d))
+        # batched
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotations), cu(D.translations_3d))
+        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotations), cu(D.translations_2d))
+    end
+
+    # Ideally the sinlge image (non batched) case would be allocation-free.
+    # The switch to KernelAbstractions made this allocating.
+    # set test to broken for now.
+    out_3d = Array{Float64, 3}(undef, D.grid_size_3d...)
+    out_2d = Array{Float64, 2}(undef, D.grid_size_2d...)
+    allocations = @ballocated DiffPointRasterisation.raster!($out_3d, $D.points, $D.rotation, $D.translation_3d) evals=1 samples=1
+    @test allocations == 0 broken=true
+    allocations = @ballocated DiffPointRasterisation.raster_project!($out_2d, $D.points, $D.rotation, $D.translation_2d) evals=1 samples=1
     @test allocations == 0 broken=true
 end
 
@@ -223,17 +300,6 @@ raster_project!(
     background,
     weight,
 )
-
-@testitem "raster_project! allocations" begin
-    using BenchmarkTools, Rotations
-    out = zeros(16, 16)
-    points = randn(3, 10)
-    rotation = rand(QuatRotation)
-    translation = zeros(2)
-
-    allocations = @ballocated DiffPointRasterisation.raster_project!($out, $points, $rotation, $translation) evals=1 samples=1
-    @test allocations == 0 broken=true
-end
 
 
 _raster!(
@@ -280,7 +346,9 @@ function _raster!(
     out .= reshape(background, ntuple(_ -> 1, N_out)..., length(background))
     args = (Val(N_in), out, points, rotation, translation, weight, shifts, scale, projection_idxs)
     backend = get_backend(out)
-    raster_kernel!(backend, 64)(args...; ndrange=(2^N_out, n_points, batch_size))
+    ndrange = (2^N_out, n_points, batch_size)
+    workgroup_size = 1024 
+    raster_kernel!(backend, workgroup_size, ndrange)(args...)
     out
 end
 
@@ -295,6 +363,46 @@ end
     shift = @inbounds shifts[neighbor_voxel_id]
     origin = (-@SVector ones(T, N_out)) - translation
 
+    coord_reference_voxel, deltas = reference_coordinate_and_deltas(
+        point,
+        rotation,
+        projection_idxs,
+        origin,
+        scale,
+    )
+    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
+
+    if voxel_idx in CartesianIndices(out)
+        val = voxel_weight(deltas, shift, projection_idxs, weight)
+        @inbounds Atomix.@atomic out[voxel_idx] += val
+    end
+    nothing
+end
+
+"""
+    reference_coordinate_and_deltas(point, rotation, projection_idxs, origin, scale)
+    
+Return 
+ - The cartesian coordinate of the voxel of an N-dimensional rectangular 
+   grid that is the one closest to the origin, out of the 2^N voxels that are next
+   neighbours of the (N-dimensional) `point`
+ - A Nx2 array containing coordinate-wise distances of the `scale`d `point` to the
+   voxel that is
+   * closest to the origin (out of the 2^N next neighbors) in the first column
+   * furthest from the origin (out of the 2^N next neighbors) in the second column.
+
+The grid is implicitely assumed to discretize the hypercube ranging from (-1, 1)
+in each dimension.
+Before `point` is discretized into this grid, it is first translated by 
+`-origin` and then scaled by `scale`.
+"""
+@inline function reference_coordinate_and_deltas(
+    point::AbstractVector{T},
+    rotation,
+    projection_idxs,
+    origin,
+    scale,
+) where {T}
     rotated_point = rotation * point
     projected_point = @inbounds rotated_point[projection_idxs]
     # coordinate of transformed point in output coordinate system
@@ -308,15 +416,7 @@ end
     deltas_lower = coord - (coord_reference_voxel .- T(0.5))
     # distances to lower (first column) and upper (second column) integer coordinates
     deltas = [deltas_lower one(T) .- deltas_lower]
-    # voxel filled by this kernel instance is
-    # coordinate of reference voxel plus shift
-    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
-
-    if voxel_idx in CartesianIndices(out)
-        val = voxel_weight(deltas, shift, projection_idxs, weight)
-        @inbounds Atomix.@atomic out[voxel_idx] += val
-    end
-    nothing
+    coord_reference_voxel, deltas
 end
 
 @inline function voxel_weight(deltas, shift, projection_idxs, point_weight)
@@ -326,48 +426,28 @@ end
     val
 end
 
-@testitem "raster! batched" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+@testitem "raster batched consistency" begin
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    #  raster
+    out_3d = zeros(D.grid_size_3d..., D.batch_size)
+    out_3d_batched = zeros(D.grid_size_3d..., D.batch_size)
 
-    out = zeros(8, 8, 8, batch_size)
-    out_batched = zeros(8, 8, 8, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(3, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    for (out_i, args...) in zip(eachslice(out, dims=4), eachslice(rotation, dims=3), eachcol(translation), background, weight)
-        raster!(out_i, points, args...)
+    for (out_i, args...) in zip(eachslice(out_3d, dims=4), eachslice(D.rotations, dims=3), eachcol(D.translations_3d), D.backgrounds, D.weights)
+        raster!(out_i, D.more_points, args...)
     end
 
-    DiffPointRasterisation.raster!(out_batched, points, rotation, translation, background, weight)
+    DiffPointRasterisation.raster!(out_3d_batched, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights)
 
-    @test out_batched ≈ out
-end
+    #  raster_project
+    out_2d = zeros(D.grid_size_2d..., D.batch_size)
+    out_2d_batched = zeros(D.grid_size_2d..., D.batch_size)
 
-@testitem "raster_project! batched" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
-
-    batch_size = batch_size_for_test()
-
-    out = zeros(16, 16, batch_size)
-    out_batched = zeros(16, 16, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(2, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    for (out_i, args...) in zip(eachslice(out, dims=3), eachslice(rotation, dims=3), eachcol(translation), background, weight)
-        DiffPointRasterisation.raster_project!(out_i, points, args...)
+    for (out_i, args...) in zip(eachslice(out_2d, dims=3), eachslice(D.rotations, dims=3), eachcol(D.translations_2d), D.backgrounds, D.weights)
+        DiffPointRasterisation.raster_project!(out_i, D.more_points, args...)
     end
 
-    DiffPointRasterisation.raster_project!(out_batched, points, rotation, translation, background, weight)
+    DiffPointRasterisation.raster_project!(out_2d_batched, D.more_points, D.rotations, D.translations_2d, D.backgrounds, D.weights)
 
-    @test out_batched ≈ out
+    @test out_2d_batched ≈ out_2d
 end

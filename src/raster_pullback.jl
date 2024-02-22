@@ -85,10 +85,10 @@ function _raster_pullback!(
     @unpack ds_dpoints = _pullback_alloc_serial(args, NamedTuple(prealloc))
     accumulate_prealloc || fill!(ds_dpoints, zero(T))
 
+    rotation = convert(SMatrix{N_in, N_in}, rotation)
     origin = (-@SVector ones(T, N_out)) - translation
     projection_idxs = SVector(ntuple(identity, N_out))
     scale = SVector{N_out, T}(size(ds_dout)) / 2 
-    half = T(0.5)
     shifts=voxel_shifts(Val(N_out))
     all_density_idxs = CartesianIndices(ds_dout)
 
@@ -100,22 +100,26 @@ function _raster_pullback!(
     # loop over points
     for (pt_idx, point) in enumerate(eachcol(points))
         point = SVector{N_in, T}(point)
-        coord::SVector{N_out, T} = ((rotation * point)[projection_idxs] - origin) .* scale
-        idx_lower = round.(Int, coord .- half, RoundUp)
-        deltas_lower = coord - (idx_lower .- half)
-        deltas = [deltas_lower 1 .- deltas_lower]
+        coord_reference_voxel, deltas = reference_coordinate_and_deltas(
+            point,
+            rotation,
+            projection_idxs,
+            origin,
+            scale,
+        )
 
         ds_dcoord = @SVector zeros(T, N_out)
         # loop over voxels that are affected by point
         for shift in shifts
-            voxel_idx = CartesianIndex(idx_lower.data .+ shift)
+            voxel_idx = CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift)
             (voxel_idx in all_density_idxs) || continue
 
-            val = one(T)
-            for i in 1:N_out
-                val *= deltas[i, mod1(shift[i], 2)]  # product of distances along each coordinate axis
-            end
-            ds_dweight += ds_dout[voxel_idx] * val
+            ds_dweight += voxel_weight(
+                deltas,
+                shift,
+                projection_idxs,
+                ds_dout[voxel_idx],
+            )
 
             factor = ds_dout[voxel_idx] * weight
             # loop over dimensions of point
@@ -124,30 +128,42 @@ function _raster_pullback!(
         scaled = ds_dcoord .* scale
         ds_dtranslation += scaled
         ds_dprojection_rotation += scaled * point'
-        ds_dpoint = rotation[projection_idxs, :]' * scaled 
+        ds_dpoint = @view(rotation[projection_idxs, :])' * scaled 
         @view(ds_dpoints[:, pt_idx]) .+= ds_dpoint
     end
     ds_drotation = N_out == N_in ? ds_dprojection_rotation : vcat(ds_dprojection_rotation, @SMatrix zeros(T, 1, N_in))
     return (; points=ds_dpoints, rotation=ds_drotation, translation=ds_dtranslation, background=sum(ds_dout), weight=ds_dweight)
 end
 
-@testitem "raster_pullback! allocations" begin
-    using BenchmarkTools, Rotations
-    ds_dout = zeros(8, 8, 8)
-    points = randn(3, 10)
-    ds_dpoints = similar(points)
-    rotation = rand(QuatRotation)
-    translation = zeros(3)
-    background = 0.0
-    weight = 1.0
+@testitem "raster_pullback! inference and allocations" begin
+    using BenchmarkTools, CUDA
+    include("../test/data.jl")
+    ds_dout_3d = randn(D.grid_size_3d)
+    ds_dout_3d_batched = randn(D.grid_size_3d..., D.batch_size)
+    ds_dout_2d = randn(D.grid_size_2d)
+    ds_dout_2d_batched = randn(D.grid_size_2d..., D.batch_size)
+    ds_dpoints = similar(D.points)
 
+    # check type stability
+    # single image
+    @inferred DiffPointRasterisation.raster_pullback!(ds_dout_3d, D.points, D.rotation, D.translation_3d)
+    @inferred DiffPointRasterisation.raster_project_pullback!(ds_dout_2d, D.points, D.rotation, D.translation_2d)
+    # batched
+    @inferred DiffPointRasterisation.raster_pullback!(ds_dout_3d_batched, D.points, D.rotations, D.translations_3d)
+    @inferred DiffPointRasterisation.raster_project_pullback!(ds_dout_2d_batched, D.points, D.rotations, D.translations_2d)
+    if CUDA.functional()
+        @inferred DiffPointRasterisation.raster_pullback!(cu(ds_dout_3d_batched), cu(D.points), cu(D.rotations), cu(D.translations_3d))
+        @inferred DiffPointRasterisation.raster_project_pullback!(cu(ds_dout_2d_batched), cu(D.points), cu(D.rotations), cu(D.translations_2d))
+    end
+
+    # check that single-imge pullback is allocation-free
     allocations = @ballocated DiffPointRasterisation.raster_pullback!(
-        $ds_dout,
-        $points,
-        $rotation,
-        $translation,
-        $background,
-        $weight;
+        $ds_dout_3d,
+        $(D.points),
+        $(D.rotation),
+        $(D.translation_3d),
+        $(D.background),
+        $(D.weight);
         points=$ds_dpoints,
     ) evals=1 samples=1
     @test allocations == 0
@@ -187,23 +203,15 @@ function _raster_pullback!(
 end
 
 @testitem "raster_pullback! threaded" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    ds_dout = randn(D.grid_size_3d..., D.batch_size)
 
-    ds_dout = zeros(8, 8, 8, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(3, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    ds_dargs_threaded = DiffPointRasterisation.raster_pullback!(ds_dout, points, rotation, translation, background, weight)
+    ds_dargs_threaded = DiffPointRasterisation.raster_pullback!(ds_dout, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights)
 
     ds_dpoints = Matrix{Float64}[]
-    for i in 1:batch_size
-        ds_dargs_i = @views raster_pullback!(ds_dout[:, :, :, i], points, rotation[:, :, i], translation[:, i], background[i], weight[i])
+    for i in 1:D.batch_size
+        ds_dargs_i = @views raster_pullback!(ds_dout[:, :, :, i], D.more_points, D.rotations[:, :, i], D.translations_3d[:, i], D.backgrounds[i], D.weights[i])
         push!(ds_dpoints, ds_dargs_i.points)
         @views begin
             @test ds_dargs_threaded.rotation[:, :, i] ≈ ds_dargs_i.rotation
@@ -216,23 +224,15 @@ end
 end
 
 @testitem "raster_project_pullback! threaded" begin
-    using BenchmarkTools, Rotations
-    include("testing.jl")
+    include("../test/data.jl")
 
-    batch_size = batch_size_for_test()
+    ds_dout = zeros(D.grid_size_2d..., D.batch_size)
 
-    ds_dout = zeros(16, 16, batch_size)
-    points = 0.3 .* randn(3, 10)
-    rotation = stack(rand(QuatRotation, batch_size))
-    translation = zeros(2, batch_size)
-    background = zeros(batch_size)
-    weight = ones(batch_size)
-
-    ds_dargs_threaded = DiffPointRasterisation.raster_project_pullback!(ds_dout, points, rotation, translation, background, weight)
+    ds_dargs_threaded = DiffPointRasterisation.raster_project_pullback!(ds_dout, D.more_points, D.rotations, D.translations_2d, D.backgrounds, D.weights)
 
     ds_dpoints = Matrix{Float64}[]
-    for i in 1:batch_size
-        ds_dargs_i = @views raster_project_pullback!(ds_dout[:, :, i], points, rotation[:, :, i], translation[:, i], background[i], weight[i])
+    for i in 1:D.batch_size
+        ds_dargs_i = @views raster_project_pullback!(ds_dout[:, :, i], D.more_points, D.rotations[:, :, i], D.translations_2d[:, i], D.backgrounds[i], D.weights[i])
         push!(ds_dpoints, ds_dargs_i.points)
         @views begin
             @test ds_dargs_threaded.rotation[:, :, i] ≈ ds_dargs_i.rotation
