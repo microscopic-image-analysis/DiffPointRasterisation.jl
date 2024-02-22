@@ -1,11 +1,20 @@
+# We provide an explicit extension package for CUDA
+# since the pullback kernel profits a lot from 
+# parallel reductions, which are relatively straightforwadly
+# expressed using while loops.
+# However KernelAbstractions currently does not play nicely
+# with while loops, see e.g. here:
+# https://github.com/JuliaGPU/KernelAbstractions.jl/issues/330
 module DiffPointRasterisationCUDAExt
 
 using DiffPointRasterisation, CUDA
+using ArgCheck
+using StaticArrays
 
 
 function raster_pullback_kernel!(
     ::Val{N_in},
-    ds_dout::CuArray{T, N_out_p1},
+    ds_dout::AbstractArray{T, N_out_p1},
     points,
     rotations,
     translations,
@@ -27,6 +36,7 @@ function raster_pullback_kernel!(
     batchsize_per_workgroup = blockDim().z
     @assert points_per_workgroup == 1
     @assert n_voxel == 2^N_out
+    @assert threadIdx().y == 1
     n_threads_per_workgroup = n_voxel * batchsize_per_workgroup
 
     s = threadIdx().x
@@ -36,45 +46,54 @@ function raster_pullback_kernel!(
     neighbor_voxel_id = (blockIdx().x - 1) * n_voxel + s
     point_idx = (blockIdx().y - 1) * points_per_workgroup + threadIdx().y
     batch_idx = (blockIdx().z - 1) * batchsize_per_workgroup + b
+    in_batch = batch_idx <= size(rotations, 3)
 
-    ds_dpoint_rot = CuStaticSharedArray(T, (N_out, n_voxel, batchsize_per_workgroup))
-    ds_dweight_local = zero(T)
+    dimension = (N_out, n_voxel, batchsize_per_workgroup)
+    ds_dpoint_rot = CuDynamicSharedArray(T, dimension)
+    ds_dpoint_local = CuDynamicSharedArray(T, (N_in, batchsize_per_workgroup), sizeof(T) * prod(dimension))
 
+    rotation = in_batch ? @inbounds(SMatrix{N_in, N_in, T}(@view rotations[:, :, batch_idx])) : @SMatrix zeros(T, N_in, N_in)
     point = @inbounds SVector{N_in, T}(@view points[:, point_idx])
-    rotation = @inbounds SMatrix{N_in, N_in, T}(@view rotations[:, :, batch_idx])
-    translation = @inbounds SVector{N_out, T}(@view translations[:, batch_idx])
-    weight = @inbounds weights[batch_idx]
-    shift = @inbounds shifts[neighbor_voxel_id]
-    origin = (-@SVector ones(T, N_out)) - translation
 
-    coord_reference_voxel, deltas = reference_coordinate_and_deltas(
-        point,
-        rotation,
-        projection_idxs,
-        origin,
-        scale,
-    )
-    voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
+    if in_batch
+        translation = @inbounds SVector{N_out, T}(@view translations[:, batch_idx])
+        weight = @inbounds weights[batch_idx]
+        shift = @inbounds shifts[neighbor_voxel_id]
+        origin = (-@SVector ones(T, N_out)) - translation
 
-
-    if voxel_idx in CartesianIndices(ds_dout)
-        @inbounds ds_dweight_local = voxel_weight(
-            deltas,
-            shift,
+        coord_reference_voxel, deltas = DiffPointRasterisation.reference_coordinate_and_deltas(
+            point,
+            rotation,
             projection_idxs,
-            ds_dout[voxel_idx],
+            origin,
+            scale,
         )
+        voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
 
-        factor = ds_dout[voxel_idx] * weight
-        ds_dcoord_part = SVector(factor .* ntuple(n -> interpolation_weight(n, N_out, deltas, shift), N_out))
-        @inbounds ds_dpoint_rot[:, s, b] = ds_dcoord_part .* scale
+
+        ds_dweight_local = zero(T)
+        if voxel_idx in CartesianIndices(ds_dout)
+            @inbounds ds_dweight_local = DiffPointRasterisation.voxel_weight(
+                deltas,
+                shift,
+                projection_idxs,
+                ds_dout[voxel_idx],
+            )
+
+            factor = ds_dout[voxel_idx] * weight
+            ds_dcoord_part = SVector(factor .* ntuple(n -> DiffPointRasterisation.interpolation_weight(n, N_out, deltas, shift), N_out))
+            @inbounds ds_dpoint_rot[:, s, b] .= ds_dcoord_part .* scale
+        else
+            @inbounds ds_dpoint_rot[:, s, b] .= zero(T)
+        end
+
+        @inbounds CUDA.@atomic ds_dweight[batch_idx] += ds_dweight_local
     else
         @inbounds ds_dpoint_rot[:, s, b] .= zero(T)
     end
 
-    @inbounds CUDA.@atomic ds_dweight[batch_idx] += ds_dweight_local
-
     # parallel summation of ds_dpoint_rot over neighboring-voxel dimension
+    # for a given thread-local batch index
     stride = 1
     @inbounds while stride < n_voxel
         sync_threads()
@@ -95,51 +114,62 @@ function raster_pullback_kernel!(
     end
 
     sync_threads()
-    i = thread
-    while i <= N_out
-        val = ds_dpoint_rot[i, 1, b]
-        @inbounds CUDA.@atomic ds_dtranslation[i, batch_idx] += val
-        coef = ds_dpoint_rot[i, 1, b]
-        j = 1
-        while j <= N_in
-            val = coef * point[j]
-            @inbounds CUDA.@atomic ds_dprojection_rotation[i, j, batch_idx] += val 
-            j += 1
+
+    if in_batch
+        dim = s
+        if dim <= N_out
+            coef = ds_dpoint_rot[dim, 1, b]
+            @inbounds CUDA.@atomic ds_dtranslation[dim, batch_idx] += coef
+            j = 1
+            while j <= N_in
+                val = coef * point[j]
+                @inbounds CUDA.@atomic ds_dprojection_rotation[dim, j, batch_idx] += val 
+                j += 1
+            end
         end
-        i += n_threads_per_workgroup
     end
 
-    # parallel summation of ds_dpoint_rot over batch dimension
+    # derivative of point with respect to rotation per batch dimension
+    dim = s
+    while dim <= N_in
+        val = zero(T)
+        j = 1
+        while j <= N_out
+            @inbounds val += rotation[j, dim] * ds_dpoint_rot[j, 1, b]
+            j += 1
+        end
+        @inbounds ds_dpoint_local[dim, b] = val
+        dim += n_voxel
+    end
+
+    # parallel summation of ds_dpoint_local over batch dimension
     stride = 1
     @inbounds while stride < batchsize_per_workgroup
         sync_threads()
         idx = 2 * stride * (b - 1) + 1
-        dim = 1
-        while dim <= N_out
+        dim = s 
+        while dim <= N_in
             if idx <= batchsize_per_workgroup
                 other_val = if idx + stride <= batchsize_per_workgroup
-                    ds_dpoint_rot[dim, 1, idx + stride]
+                    ds_dpoint_local[dim, idx + stride]
                 else
                     zero(T)
                 end
-                ds_dpoint_rot[dim, 1, idx] += other_val
+                ds_dpoint_local[dim, idx] += other_val
             end
-            dim += 1
+            dim += n_voxel
         end
         stride *= 2
     end
 
     sync_threads()
-    i = thread
-    while i <= N_in
-        val = zero(T)
-        j = 1
-        while j <= N_out
-            val += rotation[j, i] * ds_dpoint_rot[j, 1, 1]
-            j += 1
-        end
-        @inbounds ds_dpoints[i, point_idx] = val
-        i += n_threads_per_workgroup
+
+    dim = thread
+    while dim <= N_in
+        val = ds_dpoint_local[dim, 1]
+        # batch might be split across blocks, so need atomic add
+        @inbounds CUDA.@atomic ds_dpoints[dim, point_idx] += val
+        dim += n_threads_per_workgroup
     end
 
     nothing
@@ -166,26 +196,32 @@ function DiffPointRasterisation._raster_pullback!(
 
     scale = SVector{N_out, T}(size(ds_dout)[1:end-1]) / T(2)
     projection_idxs = SVector{N_out}(ntuple(identity, N_out))
-    shifts=voxel_shifts(Val(N_out))
+    shifts=DiffPointRasterisation.voxel_shifts(Val(N_out))
 
-    ds_dpoints = similar(points)
-    ds_dprojection_rotation = similar(rotation, (N_out, N_in, batch_size))
-    ds_dtranslation = similar(translation)
-    ds_dweight = similar(weight)
+    ds_dpoints = fill!(similar(points), zero(T))
+    ds_drotation = fill!(similar(rotation), zero(T))
+    ds_dtranslation = fill!(similar(translation), zero(T))
+    ds_dweight = fill!(similar(weight), zero(T))
 
-    args = (Val(N_in), ds_dout, points, rotation, translation, weight, shifts, scale, projection_idxs, ds_dpoints, ds_dprojection_rotation, ds_dtranslation, ds_dweight)
+    args = (Val(N_in), ds_dout, points, rotation, translation, weight, shifts, scale, projection_idxs, ds_dpoints, ds_drotation, ds_dtranslation, ds_dweight)
 
     ndrange = (2^N_out, n_points, batch_size)
 
-    let kernel = @cuda launch=false raster_pullback_kernel!(args...)
-        config = CUDA.launch_configuration(kernel.fun)
-        workgroup_size = (2^N_out, 1, config.threads ÷ (2^N_out))
-        kernel(args...; threads=workgroup_size, blocks=cld.(ndrange, workgroup_size))
+    workgroup_size(threads) = (2^N_out, 1, min(threads ÷ (2^N_out), batch_size))
+
+    function shmem(threads)
+        batchsize_per_workgroup =  workgroup_size(threads)[3]
+        (N_out * threads + N_in * batchsize_per_workgroup) * sizeof(T)
     end
 
+    let kernel = @cuda launch=false raster_pullback_kernel!(args...)
+        config = CUDA.launch_configuration(kernel.fun; shmem)
+        workgroup_sz = workgroup_size(config.threads)
+        blocks = cld.(ndrange, workgroup_sz)
+        kernel(args...; threads=workgroup_sz, blocks=blocks, shmem=shmem(prod(workgroup_sz)))
+    end
 
-    ds_drotation = N_out == N_in ? ds_dprojection_rotation : vcat(ds_dprojection_rotation, KernelAbstractions.zeros(backend, T, 1, N_in, batch_size))
-    ds_dbackground = dropdims(sum(ds_dout; dims=1:N_out); dims=1:N_out)
+    ds_dbackground = dropdims(sum(ds_dout; dims=1:N_out); dims=ntuple(identity, Val(N_out)))
 
     return (;
         points=ds_dpoints,

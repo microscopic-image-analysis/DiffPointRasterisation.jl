@@ -15,12 +15,12 @@ StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
 
 [weakdeps]
-ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
+ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 
 [extensions]
-DiffPointRasterisationChainRulesCoreExt = "ChainRulesCore"
 DiffPointRasterisationCUDAExt = "CUDA"
+DiffPointRasterisationChainRulesCoreExt = "ChainRulesCore"
 
 [compat]
 ChunkSplitters = "2"
@@ -32,6 +32,7 @@ TestItems = "0.1.1"
 julia = "1"
 
 [extras]
+Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
@@ -40,4 +41,4 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
 [targets]
-test = ["BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
+test = ["Adapt", "BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
