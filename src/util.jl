@@ -25,9 +25,6 @@ shift from the "upper left" voxel.
 voxel_shifts(::Val{N}, int_type=Int64) where {N} = ntuple(k -> digitstuple(k-1, Val(N), int_type), 2^N)
 
 
-prefix(s::Symbol) = Symbol("ds_d" * string(s))
-
-
 @inline append_singleton_dim(a) = reshape(a, size(a)..., 1)
 
 @inline drop_last_dim(a) = dropdims(a; dims=ndims(a))

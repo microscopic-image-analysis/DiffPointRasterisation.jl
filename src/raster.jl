@@ -62,114 +62,6 @@ raster(
     weight,
 )
 
-@testitem "raster correctness" begin
-    using Rotations
-    grid_size = (5, 5)
-
-    points_single_center = zeros(2, 1) 
-    points_single_1pix_right = [0.0;0.4;;]
-    points_single_1pix_up = [-0.4;0.0;;]
-    points_single_1pix_left = [0.0;-0.4;;]
-    points_single_1pix_down = [0.4;0.0;;]
-    points_single_halfpix_down = [0.2;0.0;;]
-    points_single_halfpix_down_and_right = [0.2;0.2;;]
-    points_four_cross = reduce(
-        hcat,
-        [
-            points_single_1pix_right, points_single_1pix_up, points_single_1pix_left, points_single_1pix_down
-        ]
-    )
-
-    no_rotation = Float64[1;0;;0;1;;]
-    rotation_90_deg = Float64[0;1;;-1;0;;]
-
-    no_translation = zeros(2)
-    translation_halfpix_right = [0.0, 0.2]
-    translation_1pix_down = [0.4, 0.0]
-
-    zero_background = 0.0
-    weight = 4.0
-
-    # -------- interpolations ---------
-
-    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 4 0 0
-        0 0 0 0 0
-        0 0 0 0 0
-    ]
-    
-    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 0 4 0
-        0 0 0 0 0
-        0 0 0 0 0
-    ]
-
-    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 2 0 0
-        0 0 2 0 0
-        0 0 0 0 0
-    ]
-
-    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 1 1 0
-        0 0 1 1 0
-        0 0 0 0 0
-    ]
-
-    # -------- translations ---------
-
-    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 4 0 0
-        0 4 0 4 0
-        0 0 4 0 0
-        0 0 0 0 0
-    ]
-
-    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 2 2 0
-        0 2 2 2 2
-        0 0 2 2 0
-        0 0 0 0 0
-    ]
-
-    out = raster(grid_size, points_four_cross, no_rotation, translation_1pix_down, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 4 0 0
-        0 4 0 4 0
-        0 0 4 0 0
-    ]
-
-    # -------- rotations ---------
-
-    out = raster(grid_size, points_single_1pix_right, rotation_90_deg, no_translation, zero_background, weight)
-    @test out ≈ [
-        0 0 0 0 0
-        0 0 4 0 0
-        0 0 0 0 0
-        0 0 0 0 0
-        0 0 0 0 0
-    ]
-end
-
-
 """
     raster_project(grid_size, points, rotation, translation, [background, weight])
 
@@ -244,37 +136,6 @@ raster!(
     background,
     weight,
 )
-
-
-@testitem "raster inference and allocations" begin
-    using BenchmarkTools, CUDA
-    include("../test/data.jl")
-
-    # check type stability
-    # single image
-    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotation, D.translation_3d)
-    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotation, D.translation_2d)
-    # batched
-    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotations, D.translations_3d)
-    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotations, D.translations_2d)
-    if CUDA.functional()
-        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotation), cu(D.translation_3d))
-        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotation), cu(D.translation_2d))
-        # batched
-        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotations), cu(D.translations_3d))
-        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotations), cu(D.translations_2d))
-    end
-
-    # Ideally the sinlge image (non batched) case would be allocation-free.
-    # The switch to KernelAbstractions made this allocating.
-    # set test to broken for now.
-    out_3d = Array{Float64, 3}(undef, D.grid_size_3d...)
-    out_2d = Array{Float64, 2}(undef, D.grid_size_2d...)
-    allocations = @ballocated DiffPointRasterisation.raster!($out_3d, $D.points, $D.rotation, $D.translation_3d) evals=1 samples=1
-    @test allocations == 0 broken=true
-    allocations = @ballocated DiffPointRasterisation.raster_project!($out_2d, $D.points, $D.rotation, $D.translation_2d) evals=1 samples=1
-    @test allocations == 0 broken=true
-end
 
 
 """
@@ -425,6 +286,145 @@ end
     val = prod(@inbounds @view deltas[delta_idxs]) * point_weight
     val
 end
+
+@testitem "raster correctness" begin
+    using Rotations
+    grid_size = (5, 5)
+
+    points_single_center = zeros(2, 1) 
+    points_single_1pix_right = [0.0;0.4;;]
+    points_single_1pix_up = [-0.4;0.0;;]
+    points_single_1pix_left = [0.0;-0.4;;]
+    points_single_1pix_down = [0.4;0.0;;]
+    points_single_halfpix_down = [0.2;0.0;;]
+    points_single_halfpix_down_and_right = [0.2;0.2;;]
+    points_four_cross = reduce(
+        hcat,
+        [
+            points_single_1pix_right, points_single_1pix_up, points_single_1pix_left, points_single_1pix_down
+        ]
+    )
+
+    no_rotation = Float64[1;0;;0;1;;]
+    rotation_90_deg = Float64[0;1;;-1;0;;]
+
+    no_translation = zeros(2)
+    translation_halfpix_right = [0.0, 0.2]
+    translation_1pix_down = [0.4, 0.0]
+
+    zero_background = 0.0
+    weight = 4.0
+
+    # -------- interpolations ---------
+
+    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 4 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+    ]
+    
+    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 4 0
+        0 0 0 0 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 2 0 0
+        0 0 2 0 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 1 1 0
+        0 0 1 1 0
+        0 0 0 0 0
+    ]
+
+    # -------- translations ---------
+
+    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 4 0 0
+        0 4 0 4 0
+        0 0 4 0 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 2 2 0
+        0 2 2 2 2
+        0 0 2 2 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_four_cross, no_rotation, translation_1pix_down, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 4 0 0
+        0 4 0 4 0
+        0 0 4 0 0
+    ]
+
+    # -------- rotations ---------
+
+    out = raster(grid_size, points_single_1pix_right, rotation_90_deg, no_translation, zero_background, weight)
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 4 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+        0 0 0 0 0
+    ]
+end
+
+
+@testitem "raster inference and allocations" begin
+    using BenchmarkTools, CUDA
+    include("../test/data.jl")
+
+    # check type stability
+    # single image
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotation, D.translation_3d)
+    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotation, D.translation_2d)
+    # batched
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points, D.rotations, D.translations_3d)
+    @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, D.points, D.rotations, D.translations_2d)
+    if CUDA.functional()
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotation), cu(D.translation_3d))
+        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotation), cu(D.translation_2d))
+        # batched
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points), cu(D.rotations), cu(D.translations_3d))
+        @inferred DiffPointRasterisation.raster_project(D.grid_size_2d, cu(D.points), cu(D.rotations), cu(D.translations_2d))
+    end
+
+    # Ideally the sinlge image (non batched) case would be allocation-free.
+    # The switch to KernelAbstractions made this allocating.
+    # set test to broken for now.
+    out_3d = Array{Float64, 3}(undef, D.grid_size_3d...)
+    out_2d = Array{Float64, 2}(undef, D.grid_size_2d...)
+    allocations = @ballocated DiffPointRasterisation.raster!($out_3d, $D.points, $D.rotation, $D.translation_3d) evals=1 samples=1
+    @test allocations == 0 broken=true
+    allocations = @ballocated DiffPointRasterisation.raster_project!($out_2d, $D.points, $D.rotation, $D.translation_2d) evals=1 samples=1
+    @test allocations == 0 broken=true
+end
+
 
 @testitem "raster batched consistency" begin
     include("../test/data.jl")

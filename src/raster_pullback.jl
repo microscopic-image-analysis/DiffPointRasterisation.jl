@@ -244,6 +244,10 @@ end
     @test ds_dargs_threaded.points ≈ sum(ds_dpoints)
 end
 
+
+prefix(s::Symbol) = Symbol("ds_d" * string(s))
+
+
 _pullback_alloc_serial(args, prealloc) = _pullback_alloc_points_serial(args, prealloc)
 
 function _pullback_alloc_threaded(args, prealloc, n)
