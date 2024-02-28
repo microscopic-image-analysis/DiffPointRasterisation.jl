@@ -31,21 +31,21 @@ function raster_pullback_kernel!(
 ) where {T, N_in, N_out_p1}
     N_out = N_out_p1 - 1  # dimensionality of output, without batch dimension
 
-    n_voxel = blockDim().x
-    points_per_workgroup = blockDim().y
-    batchsize_per_workgroup = blockDim().z
-    @assert points_per_workgroup == 1
-    @assert n_voxel == 2^N_out
-    @assert threadIdx().y == 1
+    n_voxel = blockDim().z
+    points_per_workgroup = blockDim().x
+    batchsize_per_workgroup = blockDim().y
+    # @assert points_per_workgroup == 1
+    # @assert n_voxel == 2^N_out
+    # @assert threadIdx().x == 1
     n_threads_per_workgroup = n_voxel * batchsize_per_workgroup
 
-    s = threadIdx().x
-    b = threadIdx().z
+    s = threadIdx().z
+    b = threadIdx().y
     thread = (b - 1) * n_voxel + s
 
-    neighbor_voxel_id = (blockIdx().x - 1) * n_voxel + s
-    point_idx = (blockIdx().y - 1) * points_per_workgroup + threadIdx().y
-    batch_idx = (blockIdx().z - 1) * batchsize_per_workgroup + b
+    neighbor_voxel_id = (blockIdx().z - 1) * n_voxel + s
+    point_idx = (blockIdx().x - 1) * points_per_workgroup + threadIdx().x
+    batch_idx = (blockIdx().y - 1) * batchsize_per_workgroup + b
     in_batch = batch_idx <= size(rotations, 3)
 
     dimension = (N_out, n_voxel, batchsize_per_workgroup)
@@ -194,6 +194,8 @@ function DiffPointRasterisation._raster_pullback!(
     batch_size = length(batch_axis)
     @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
 
+    ds_dbackground = dropdims(sum(ds_dout; dims=1:N_out); dims=ntuple(identity, Val(N_out)))
+
     scale = SVector{N_out, T}(size(ds_dout)[1:end-1]) / T(2)
     projection_idxs = SVector{N_out}(ntuple(identity, N_out))
     shifts=DiffPointRasterisation.voxel_shifts(Val(N_out))
@@ -205,12 +207,12 @@ function DiffPointRasterisation._raster_pullback!(
 
     args = (Val(N_in), ds_dout, points, rotation, translation, weight, shifts, scale, projection_idxs, ds_dpoints, ds_drotation, ds_dtranslation, ds_dweight)
 
-    ndrange = (2^N_out, n_points, batch_size)
+    ndrange = (n_points, batch_size, 2^N_out)
 
-    workgroup_size(threads) = (2^N_out, 1, min(threads ÷ (2^N_out), batch_size))
+    workgroup_size(threads) = (1, min(threads ÷ (2^N_out), batch_size), 2^N_out)
 
     function shmem(threads)
-        batchsize_per_workgroup =  workgroup_size(threads)[3]
+        batchsize_per_workgroup =  workgroup_size(threads)[2]
         (N_out * threads + N_in * batchsize_per_workgroup) * sizeof(T)
     end
 
@@ -220,8 +222,6 @@ function DiffPointRasterisation._raster_pullback!(
         blocks = cld.(ndrange, workgroup_sz)
         kernel(args...; threads=workgroup_sz, blocks=blocks, shmem=shmem(prod(workgroup_sz)))
     end
-
-    ds_dbackground = dropdims(sum(ds_dout; dims=1:N_out); dims=ntuple(identity, Val(N_out)))
 
     return (;
         points=ds_dpoints,
