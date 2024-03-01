@@ -135,6 +135,39 @@ function _raster_pullback!(
     return (; points=ds_dpoints, rotation=ds_drotation, translation=ds_dtranslation, background=sum(ds_dout), weight=ds_dweight)
 end
 
+function _raster_pullback!(
+    ::Val{N_in},
+    ds_dout::AbstractArray{T},
+    points::AbstractMatrix{<:Number},
+    rotation::AbstractArray{<:Number, 3},
+    translation::AbstractMatrix{<:Number},
+    # TODO: for some reason type inference fails if the following
+    # two arrays are FillArrays... 
+    background::AbstractVector{<:Number}=zeros(T, size(rotation, 3)),
+    weight::AbstractVector{<:Number}=ones(T, size(rotation, 3));
+    prealloc...
+) where {N_in, T<:Number}
+    out_batch_dim = ndims(ds_dout)
+    batch_axis = axes(ds_dout, out_batch_dim)
+    @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
+    args = (;points, rotation, translation, background, weight)
+    @unpack ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight = _pullback_alloc_threaded(args, NamedTuple(prealloc), min(length(batch_axis), Threads.nthreads()))
+    @assert ndims(ds_dpoints) == 3
+    fill!(ds_dpoints, zero(T))
+
+    Threads.@threads for (idxs, ichunk) in chunks(batch_axis, size(ds_dpoints, 3))
+        for i in idxs
+            args_i = (selectdim(ds_dout, out_batch_dim, i), points, view(rotation, :, :, i), view(translation, :, i), background[i], weight[i])
+            result_i = _raster_pullback!(Val(N_in), args_i...; accumulate_prealloc=true, points=view(ds_dpoints, :, :, ichunk))
+            ds_drotation[:, :, i] .= result_i.rotation
+            ds_dtranslation[:, i] = result_i.translation
+            ds_dbackground[i] = result_i.background
+            ds_dweight[i] = result_i.weight
+        end
+    end
+    return (; points=dropdims(sum(ds_dpoints; dims=3); dims=3), rotation=ds_drotation, translation=ds_dtranslation, background=ds_dbackground, weight=ds_dweight)
+end
+
 @testitem "raster_pullback! inference and allocations" begin
     using BenchmarkTools, CUDA
     include("../test/data.jl")
@@ -169,38 +202,6 @@ end
     @test allocations == 0
 end
 
-function _raster_pullback!(
-    ::Val{N_in},
-    ds_dout::AbstractArray{T},
-    points::AbstractMatrix{<:Number},
-    rotation::AbstractArray{<:Number, 3},
-    translation::AbstractMatrix{<:Number},
-    # TODO: for some reason type inference fails if the following
-    # two arrays are FillArrays... 
-    background::AbstractVector{<:Number}=zeros(T, size(rotation, 3)),
-    weight::AbstractVector{<:Number}=ones(T, size(rotation, 3));
-    prealloc...
-) where {N_in, T<:Number}
-    out_batch_dim = ndims(ds_dout)
-    batch_axis = axes(ds_dout, out_batch_dim)
-    @argcheck axes(ds_dout, out_batch_dim) == axes(rotation, 3) == axes(translation, 2) == axes(background, 1) == axes(weight, 1)
-    args = (;points, rotation, translation, background, weight)
-    @unpack ds_dpoints, ds_drotation, ds_dtranslation, ds_dbackground, ds_dweight = _pullback_alloc_threaded(args, NamedTuple(prealloc), min(length(batch_axis), Threads.nthreads()))
-    @assert ndims(ds_dpoints) == 3
-    fill!(ds_dpoints, zero(T))
-
-    Threads.@threads for (idxs, ichunk) in chunks(batch_axis, size(ds_dpoints, 3))
-        for i in idxs
-            args_i = (selectdim(ds_dout, out_batch_dim, i), points, view(rotation, :, :, i), view(translation, :, i), background[i], weight[i])
-            result_i = _raster_pullback!(Val(N_in), args_i...; accumulate_prealloc=true, points=view(ds_dpoints, :, :, ichunk))
-            ds_drotation[:, :, i] .= result_i.rotation
-            ds_dtranslation[:, i] = result_i.translation
-            ds_dbackground[i] = result_i.background
-            ds_dweight[i] = result_i.weight
-        end
-    end
-    return (; points=dropdims(sum(ds_dpoints; dims=3); dims=3), rotation=ds_drotation, translation=ds_dtranslation, background=ds_dbackground, weight=ds_dweight)
-end
 
 @testitem "raster_pullback! threaded" begin
     include("../test/data.jl")
