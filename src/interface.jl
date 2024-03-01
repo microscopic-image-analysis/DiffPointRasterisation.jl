@@ -43,7 +43,9 @@ function raster(
         # non-batched
         out = similar(rotation, T, grid_size)
     else
-        batch_size = isa(rotation, AbstractVector) ? length(rotation) : size(rotation, 3)
+        # batched
+        @assert rotation isa AbstractVector{<:AbstractMatrix}
+        batch_size = length(rotation)
         out = similar(rotation, T, (grid_size..., batch_size))
     end
     raster!(out, args...)
@@ -62,13 +64,10 @@ deep_eltype(t::Type{<:AbstractArray}) = deep_eltype(eltype(t))
 @inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any, 4}) = raster!(out, args..., default_weight(args[2]))
 
 ###############################################
-# Step 3: Convert arguments to canonical from
-#         i.e. vec-of-array style
+# Step 3: Convenience interface for single image:
+#         Convert arguments for single image to
+#         length-1 vec of arguments
 ###############################################
-
-#----------------------------------------------
-# Step 3a: If input is for a single image
-#----------------------------------------------
 
 raster!(
     out::AbstractArray{<:Number},
@@ -81,33 +80,45 @@ raster!(
     raster!(
         append_singleton_dim(out),
         points,
-        append_singleton_dim(rotation),
-        append_singleton_dim(translation),
-        append_singleton_dim(background),
-        append_singleton_dim(weight),
+        @SVector([rotation]),
+        @SVector([translation]),
+        @SVector([background]),
+        @SVector([weight]),
     )
 )
 
-#----------------------------------------------
-# Step 3b: If input is for a batch of images
-#----------------------------------------------
+###############################################
+# Step 4: Convert arguments to canonical form,
+#         i.e. vectors of statically sized arrays
+###############################################
 
-raster!(out::AbstractArray{<:Number}, args::Vararg{Any, 5}) = raster!(out, canonical_arg.(args)...)
+raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector, 5}) = raster!(out, canonical_arg.(args)...)
 
 ###############################################
-# Step 4: Error on inconsistent dimensions
+# Step 5: Error on inconsistent dimensions
 ###############################################
 
 # if N_out_rot == N_out_trans this should not be called
 # because the actual implementation specializes on N_out
-raster!(
-    ::AbstractArray{<:Number},
+function raster!(
+    ::AbstractArray{<:Number, N_out},
     ::AbstractVector{<:StaticVector{N_in, <:Number}},
-    ::AbstractVector{<:StaticMatrix{N_out_rot, N_in, <:Number}},
+    ::AbstractVector{<:StaticMatrix{N_out_rot, N_in_rot, <:Number}},
     ::AbstractVector{<:StaticVector{N_out_trans, <:Number}},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
-) where {N_in, N_out_rot, N_out_trans} = error("Row dimension of rotation (got $N_out_rot) and translation (got $N_out_trans) must agree!")
+) where {N_in, N_out, N_in_rot, N_out_rot, N_out_trans}
+    if N_out_trans != N_out
+        error("Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!")
+    end
+    if N_out_rot != N_out
+        error("Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!")
+    end
+    if N_in_rot != N_in
+        error("Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!")
+    end
+    error("Dispatch error. Should not arrive here. Please file a bug.")
+end
 
 
 default_background(rotation::AbstractMatrix, T=eltype(rotation)) = zero(T)
@@ -128,47 +139,57 @@ default_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = On
 
     @testset "no projection" begin
         local out
-        @testset "canonical arguments (vec of array)" begin
+        @testset "canonical arguments (vec of staticarray)" begin
             out = raster(
                 D.grid_size_3d,
-                D.points_vec,
-                D.rotations_vec,
-                D.translations_3d_vec,
+                D.points_static,
+                D.rotations_static,
+                D.translations_3d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "points as matrix" begin
+        @testset "reinterpret nd-array as vec-of-array" begin
+            @test out ≈ raster(
+                D.grid_size_3d,
+                D.points_reinterp,
+                D.rotations_reinterp,
+                D.translations_3d_reinterp,
+                D.backgrounds,
+                D.weights
+            )
+        end
+        @testset "point as non-static vector" begin
             @test out ≈ raster(
                 D.grid_size_3d,
                 D.points,
-                D.rotations_vec,
-                D.translations_3d_vec,
+                D.rotations_static,
+                D.translations_3d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "rotations as 3d-array" begin
+        @testset "rotation as non-static matrix" begin
             @test out ≈ raster(
                 D.grid_size_3d,
-                D.points_vec,
+                D.points_static,
                 D.rotations,
-                D.translations_3d_vec,
+                D.translations_3d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "translations as matrix" begin
+        @testset "translation as non-static vector" begin
             @test out ≈ raster(
                 D.grid_size_3d,
-                D.points_vec,
-                D.rotations_vec,
+                D.points_static,
+                D.rotations_static,
                 D.translations_3d,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "all as nd-array" begin
+        @testset "all as non-static array" begin
             @test out ≈ raster(
                 D.grid_size_3d,
                 D.points,
@@ -180,21 +201,21 @@ default_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = On
         end
         out = raster(
             D.grid_size_3d,
-            D.points_vec,
-            D.rotations_vec,
-            D.translations_3d_vec,
+            D.points_static,
+            D.rotations_static,
+            D.translations_3d_static,
             zeros(D.batch_size),
             ones(D.batch_size),
         )
         @testset "default argmuments canonical" begin
             @test out ≈ raster(
                 D.grid_size_3d,
-                D.points_vec,
-                D.rotations_vec,
-                D.translations_3d_vec,
+                D.points_static,
+                D.rotations_static,
+                D.translations_3d_static,
             )
         end
-        @testset "default arguments all as nd-array" begin
+        @testset "default arguments all as non-static array" begin
             @test out ≈ raster(
                 D.grid_size_3d,
                 D.points,
@@ -206,50 +227,60 @@ default_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = On
 
     @testset "projection" begin
         local out
-        @testset "canonical arguments (vec of array)" begin
+        @testset "canonical arguments (vec of staticarray)" begin
             out = raster(
                 D.grid_size_2d,
-                D.points_vec,
-                D.projections_vec,
-                D.translations_2d_vec,
+                D.points_static,
+                D.projections_static,
+                D.translations_2d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "points as matrix" begin
+        @testset "reinterpret nd-array as vec-of-array" begin
+            @test out ≈ raster(
+                D.grid_size_2d,
+                D.points_reinterp,
+                D.projections_reinterp,
+                D.translations_2d_reinterp,
+                D.backgrounds,
+                D.weights
+            )
+        end
+        @testset "point as non-static vector" begin
             @test out ≈ raster(
                 D.grid_size_2d,
                 D.points,
-                D.projections_vec,
-                D.translations_2d_vec,
+                D.projections_static,
+                D.translations_2d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "projections as 3d-array" begin
+        @testset "projection as non-static matrix" begin
             @test out ≈ raster(
                 D.grid_size_2d,
-                D.points_vec,
+                D.points_static,
                 D.projections,
-                D.translations_2d_vec,
+                D.translations_2d_static,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "translations as matrix" begin
+        @testset "translation as non-static vector" begin
             @test out ≈ raster(
                 D.grid_size_2d,
-                D.points_vec,
-                D.projections_vec,
+                D.points_static,
+                D.projections_static,
                 D.translations_2d,
                 D.backgrounds,
                 D.weights
             )
         end
-        @testset "all as nd-array" begin
+        @testset "all as non-static array" begin
             @test out ≈ raster(
                 D.grid_size_2d,
-                D.points_vec,
+                D.points_static,
                 D.projections,
                 D.translations_2d,
                 D.backgrounds,
@@ -258,21 +289,21 @@ default_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = On
         end
         out = raster(
             D.grid_size_2d,
-            D.points_vec,
-            D.projections_vec,
-            D.translations_2d_vec,
+            D.points_static,
+            D.projections_static,
+            D.translations_2d_static,
             zeros(D.batch_size),
             ones(D.batch_size),
         )
         @testset "default argmuments canonical" begin
             @test out ≈ raster(
                 D.grid_size_2d,
-                D.points_vec,
-                D.projections_vec,
-                D.translations_2d_vec,
+                D.points_static,
+                D.projections_static,
+                D.translations_2d_static,
             )
         end
-        @testset "default arguments all as nd-array" begin
+        @testset "default arguments all as non-static array" begin
             @test out ≈ raster(
                 D.grid_size_2d,
                 D.points,

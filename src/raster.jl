@@ -1,5 +1,5 @@
 ###############################################
-# Step 4: Actual implementation
+# Step 6: Actual implementation
 ###############################################
 
 function raster!(
@@ -105,15 +105,15 @@ end
     using Rotations
     grid_size = (5, 5)
 
-    points_single_center = zeros(2, 1) 
-    points_single_1pix_right = [0.0;0.4;;]
-    points_single_1pix_up = [-0.4;0.0;;]
-    points_single_1pix_left = [0.0;-0.4;;]
-    points_single_1pix_down = [0.4;0.0;;]
-    points_single_halfpix_down = [0.2;0.0;;]
-    points_single_halfpix_down_and_right = [0.2;0.2;;]
+    points_single_center = [zeros(2)]
+    points_single_1pix_right = [[0.0, 0.4]]
+    points_single_1pix_up = [[-0.4, 0.0]]
+    points_single_1pix_left = [[0.0, -0.4]]
+    points_single_1pix_down = [[0.4, 0.0]]
+    points_single_halfpix_down = [[0.2, 0.0]]
+    points_single_halfpix_down_and_right = [[0.2, 0.2]]
     points_four_cross = reduce(
-        hcat,
+        vcat,
         [
             points_single_1pix_right, points_single_1pix_up, points_single_1pix_left, points_single_1pix_down
         ]
@@ -216,22 +216,24 @@ end
     # check type stability
 
     # single image
-    # TODO: make single image type-stable
-    # @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points_vec, D.rotation, D.translation_3d)
-    # @inferred DiffPointRasterisation.raster(D.grid_size_2d, D.points_vec, D.projection, D.translation_2d)
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points_static, D.rotation, D.translation_3d)
+    @inferred DiffPointRasterisation.raster(D.grid_size_2d, D.points_static, D.projection, D.translation_2d)
 
-    # batched
-    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points_vec, D.rotations_vec, D.translations_3d_vec)
-    @inferred DiffPointRasterisation.raster(D.grid_size_2d, D.points_vec, D.projections_vec, D.translations_2d_vec)
+    # batched canonical
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points_static, D.rotations_static, D.translations_3d_static)
+    @inferred DiffPointRasterisation.raster(D.grid_size_2d, D.points_static, D.projections_static, D.translations_2d_static)
+
+    # batched reinterpret reshape
+    @inferred DiffPointRasterisation.raster(D.grid_size_3d, D.points_reinterp, D.rotations_reinterp, D.translations_3d_reinterp)
+    @inferred DiffPointRasterisation.raster(D.grid_size_2d, D.points_reinterp, D.projections_reinterp, D.translations_2d_reinterp)
     if CUDA.functional()
         # single image
-        # TODO: make single image type-stable
-        # @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points_vec), cu(D.rotation), cu(D.translation_3d))
-        # @inferred DiffPointRasterisation.raster(D.grid_size_2d, cu(D.points_vec), cu(D.projection), cu(D.translation_2d))
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points_static), cu(D.rotation), cu(D.translation_3d))
+        @inferred DiffPointRasterisation.raster(D.grid_size_2d, cu(D.points_static), cu(D.projection), cu(D.translation_2d))
 
         # batched
-        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points_vec), cu(D.rotations_vec), cu(D.translations_3d_vec))
-        @inferred DiffPointRasterisation.raster(D.grid_size_2d, cu(D.points_vec), cu(D.projections_vec), cu(D.translations_2d_vec))
+        @inferred DiffPointRasterisation.raster(D.grid_size_3d, cu(D.points_static), cu(D.rotations_static), cu(D.translations_3d_static))
+        @inferred DiffPointRasterisation.raster(D.grid_size_2d, cu(D.points_static), cu(D.projections_static), cu(D.translations_2d_static))
     end
 
     # Ideally the sinlge image (non batched) case would be allocation-free.
@@ -239,9 +241,9 @@ end
     # set test to broken for now.
     out_3d = Array{Float64, 3}(undef, D.grid_size_3d...)
     out_2d = Array{Float64, 2}(undef, D.grid_size_2d...)
-    allocations = @ballocated DiffPointRasterisation.raster!($out_3d, $D.points_vec, $D.rotation, $D.translation_3d) evals=1 samples=1
+    allocations = @ballocated DiffPointRasterisation.raster!($out_3d, $D.points_static, $D.rotation, $D.translation_3d) evals=1 samples=1
     @test allocations == 0 broken=true
-    allocations = @ballocated DiffPointRasterisation.raster!($out_2d, $D.points_vec, $D.projection, $D.translation_2d) evals=1 samples=1
+    allocations = @ballocated DiffPointRasterisation.raster!($out_2d, $D.points_static, $D.projection, $D.translation_2d) evals=1 samples=1
     @test allocations == 0 broken=true
 end
 
@@ -253,7 +255,7 @@ end
     out_3d = zeros(D.grid_size_3d..., D.batch_size)
     out_3d_batched = zeros(D.grid_size_3d..., D.batch_size)
 
-    for (out_i, args...) in zip(eachslice(out_3d, dims=4), eachslice(D.rotations, dims=3), eachcol(D.translations_3d), D.backgrounds, D.weights)
+    for (out_i, args...) in zip(eachslice(out_3d, dims=4), D.rotations, D.translations_3d, D.backgrounds, D.weights)
         raster!(out_i, D.more_points, args...)
     end
 
@@ -263,7 +265,7 @@ end
     out_2d = zeros(D.grid_size_2d..., D.batch_size)
     out_2d_batched = zeros(D.grid_size_2d..., D.batch_size)
 
-    for (out_i, args...) in zip(eachslice(out_2d, dims=3), eachslice(D.projections, dims=3), eachcol(D.translations_2d), D.backgrounds, D.weights)
+    for (out_i, args...) in zip(eachslice(out_2d, dims=3), D.projections, D.translations_2d, D.backgrounds, D.weights)
         DiffPointRasterisation.raster!(out_i, D.more_points, args...)
     end
 

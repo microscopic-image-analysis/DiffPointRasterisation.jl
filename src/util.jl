@@ -24,39 +24,52 @@ shift from the "upper left" voxel.
 """
 voxel_shifts(::Val{N}, int_type=Int64) where {N} = ntuple(k -> digitstuple(k-1, Val(N), int_type), 2^N)
 
-canonical_arg(arg::Number) = SVector{1}(arg)
+canonical_arg(arg::Number) = @SVector [arg]
 
 canonical_arg(arg::AbstractVector{<:Number}) = arg
 
 canonical_arg(arg::AbstractVector{<:StaticArray}) = arg
 
-canonical_arg(arg::AbstractVector{<:AbstractArray}) = SizedArray{Tuple{size(arg[1])...}}.(arg)
+canonical_arg(arg::AbstractVector{<:AbstractArray{<:Number}}) = canonical_arg(arg, Val(size(arg[1])))
 
-canonical_arg(arg::AbstractMatrix{T}) where {T<:Number} = reinterpret(reshape, SVector{size(arg, 1), T}, arg)
-
-function canonical_arg(arg::AbstractArray{T, 3}) where {T<:Number}
-    N = size(arg, 1)
-    M = size(arg, 2)
-    L = N*M
-    reinterpret(reshape, SMatrix{N, M, T, L}, reshape(arg, L, :))
-end
+canonical_arg(arg::AbstractVector{<:AbstractArray{T}}, ::Val{sz}) where {sz, T<:Number} = SizedArray{Tuple{sz...}, T}.(arg)
 
 @testitem "canonical_arg" begin
+    using StaticArrays
+    @testset "number" begin
+        inp = randn()
+        @inferred DiffPointRasterisation.canonical_arg(inp)
+        out = DiffPointRasterisation.canonical_arg(inp)
+        @test out[] == inp
+        @test out isa StaticVector{1}
+    end
     @testset "vector" begin
-        v = randn(3)
-        @test DiffPointRasterisation.canonical_arg(v) == v
+        inp = randn(3)
+        @inferred DiffPointRasterisation.canonical_arg(inp)
+        out = DiffPointRasterisation.canonical_arg(inp)
+        @test out === inp
     end
 
-    @testset "matrix" begin
-        v_of_v = [randn(3) for _ in 1:5]
-        m = stack(v_of_v)
-        @test DiffPointRasterisation.canonical_arg(m) == v_of_v
+    @testset "vec of dynamic vec" begin
+        inp = [randn(3) for _ in 1:5]
+        out = DiffPointRasterisation.canonical_arg(inp)
+        @test out == inp
+        @test out isa Vector{<:StaticVector{3}}
     end
 
-    @testset "3d array" begin
-        v_of_m = [randn(3, 2) for _ in 1:5]
-        a = stack(v_of_m)
-        @test DiffPointRasterisation.canonical_arg(a) == v_of_m
+    @testset "vec of static vec" begin
+        inp = [@SVector randn(3) for _ in 1:5]
+        @inferred DiffPointRasterisation.canonical_arg(inp)
+        out = DiffPointRasterisation.canonical_arg(inp)
+        @test out === inp
+        @test out isa Vector{<:StaticVector{3}}
+    end
+
+    @testset "vec of dynamic matrix" begin
+        inp = [randn(3, 2) for _ in 1:5]
+        out = DiffPointRasterisation.canonical_arg(inp)
+        @test out == inp
+        @test out isa Vector{<:StaticMatrix{3, 2}}
     end
 end
 
