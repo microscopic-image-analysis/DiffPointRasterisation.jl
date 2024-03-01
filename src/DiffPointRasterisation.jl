@@ -12,6 +12,7 @@ using TestItems
 include("util.jl")
 include("raster.jl")
 include("raster_pullback.jl")
+include("interface.jl")
 
 export raster, raster!, raster_project, raster_project!, raster_pullback!, raster_project_pullback!
 
