@@ -176,7 +176,7 @@ function raster_pullback_kernel!(
 end
 
 
-function DiffPointRasterisation._raster_pullback!(
+function DiffPointRasterisation.raster_pullback!(
     ::Val{N_in},
     ds_dout::CuArray{T, N_out_p1},
     points::CuMatrix{<:Number},

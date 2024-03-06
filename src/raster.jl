@@ -17,10 +17,9 @@ function raster!(
     n_points = length(points)
 
     scale = SVector{N_out, T}(size(out)[1:end-1]) / T(2)
-    projection_idxs = SVector{N_out}(ntuple(identity, N_out))
     shifts=voxel_shifts(Val(N_out))
     out .= reshape(background, ntuple(_ -> 1, Val(N_out))..., length(background))
-    args = (out, points, rotation, translation, weight, shifts, scale, projection_idxs)
+    args = (out, points, rotation, translation, weight, shifts, scale)
     backend = get_backend(out)
     ndrange = (2^N_out, n_points, batch_size)
     workgroup_size = 1024 
@@ -28,7 +27,7 @@ function raster!(
     out
 end
 
-@kernel function raster_kernel!(out::AbstractArray{T}, points, rotations, translations::AbstractVector{<:StaticVector{N_out}}, weights, shifts, scale, projection_idxs) where {T, N_out}
+@kernel function raster_kernel!(out::AbstractArray{T}, points, rotations, translations::AbstractVector{<:StaticVector{N_out}}, weights, shifts, scale) where {T, N_out}
     neighbor_voxel_id, point_idx, batch_idx = @index(Global, NTuple)
 
     point = @inbounds points[point_idx]
@@ -41,21 +40,20 @@ end
     coord_reference_voxel, deltas = reference_coordinate_and_deltas(
         point,
         rotation,
-        projection_idxs,
         origin,
         scale,
     )
     voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
 
     if voxel_idx in CartesianIndices(out)
-        val = voxel_weight(deltas, shift, projection_idxs, weight)
+        val = voxel_weight(deltas, shift, weight)
         @inbounds Atomix.@atomic out[voxel_idx] += val
     end
     nothing
 end
 
 """
-    reference_coordinate_and_deltas(point, rotation, projection_idxs, origin, scale)
+    reference_coordinate_and_deltas(point, rotation, origin, scale)
     
 Return 
  - The cartesian coordinate of the voxel of an N-dimensional rectangular 
@@ -74,12 +72,10 @@ Before `point` is discretized into this grid, it is first translated by
 @inline function reference_coordinate_and_deltas(
     point::AbstractVector{T},
     rotation,
-    projection_idxs,
     origin,
     scale,
 ) where {T}
-    rotated_point = rotation * point
-    projected_point = @inbounds rotated_point[projection_idxs]
+    projected_point = rotation * point
     # coordinate of transformed point in output coordinate system
     # which is defined by the (integer) coordinates of the pixels/voxels
     # in the output array.
@@ -94,9 +90,9 @@ Before `point` is discretized into this grid, it is first translated by
     coord_reference_voxel, deltas
 end
 
-@inline function voxel_weight(deltas, shift, projection_idxs, point_weight)
+@inline function voxel_weight(deltas, shift::NTuple{N, Int}, point_weight) where {N}
     lower_upper = mod1.(shift, 2)
-    delta_idxs = CartesianIndex.(projection_idxs, lower_upper)
+    delta_idxs = SVector{N}(CartesianIndex.(ntuple(identity, Val(N)), lower_upper))
     val = prod(@inbounds @view deltas[delta_idxs]) * point_weight
     val
 end

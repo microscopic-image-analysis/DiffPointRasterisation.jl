@@ -71,7 +71,7 @@ deep_eltype(t::Type{<:AbstractArray}) = deep_eltype(eltype(t))
 
 raster!(
     out::AbstractArray{<:Number},
-    points::AbstractVecOrMat,
+    points::AbstractVector{<:AbstractVector{<:Number}},
     rotation::AbstractMatrix{<:Number},
     translation::AbstractVector{<:Number},
     background::Number,
@@ -92,7 +92,7 @@ raster!(
 #         i.e. vectors of statically sized arrays
 ###############################################
 
-raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector, 5}) = raster!(out, canonical_arg.(args)...)
+raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector, 5}) = raster!(out, inner_to_sized.(args)...)
 
 ###############################################
 # Step 5: Error on inconsistent dimensions
@@ -120,6 +120,178 @@ function raster!(
     error("Dispatch error. Should not arrive here. Please file a bug.")
 end
 
+# now similar for pullback
+"""
+    raster_pullback!(
+        ds_dout, args...;
+        [points, rotation, translation, background, weight]
+    )
+
+Pullback for `raster(grid_size, args...)`/`raster!(out, args...)`.
+
+Take as input `ds_dout` the sensitivity of some quantity (`s` for "scalar")
+to the *output* `out` of the function `out = raster(grid_size, args...)`
+(or `out = raster!(out, args...)`), as well as
+the exact same arguments `args` that were passed to `raster`/`raster!`, and
+return the sensitivities of `s` to the *inputs* `args` of the function
+`raster`/`raster!`.
+
+Optionally, pre-allocated output arrays for each input sensitivity can be
+specified as keyword arguments with the name of the original argument to
+`raster` as key, and a nd-array as value, where the n-th dimension is the
+batch dimension.
+For example to provide a pre-allocated array for the sensitivity of `s` to
+the `translation` argument of `raster`, do:
+`sensitivities = raster_pullback!(ds_dout, args...; translation = [zeros(2) for _ in 1:8])`
+for 2-dimensional points and a batch size of 8.
+"""
+function raster_pullback! end
+
+
+###############################################
+# Step 1: Fill default arguments if necessary
+###############################################
+
+@inline raster_pullback!(ds_out::AbstractArray{<:Number}, args::Vararg{Any, 3}; kwargs...) = raster_pullback!(ds_out, args..., default_background(args[2]); kwargs...)
+@inline raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{Any, 4}; kwargs...) = raster_pullback!(ds_dout, args..., default_weight(args[2]); kwargs...)
+
+
+###############################################
+# Step 2: Convert arguments to canonical form,
+#         i.e. vectors of statically sized arrays
+###############################################
+
+# single image
+raster_pullback!(
+    ds_dout::AbstractArray{<:Number},
+    points::AbstractVector{<:AbstractVector{<:Number}},
+    rotation::AbstractMatrix{<:Number},
+    translation::AbstractVector{<:Number},
+    background::Number,
+    weight::Number;
+    kwargs...
+) = raster_pullback!(
+    ds_dout,
+    inner_to_sized(points),
+    to_sized(rotation),
+    to_sized(translation),
+    background,
+    weight;
+    kwargs...
+)
+
+# batch of images
+raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{AbstractVector, 5}; kwargs...) = raster_pullback!(ds_dout, inner_to_sized.(args)...; kwargs...)
+
+
+###############################################
+# Step 3: Allocate output
+###############################################
+
+# single image
+raster_pullback!(
+    ds_dout::AbstractArray{<:Number, N_out},
+    inp_points::AbstractVector{<:StaticVector{N_in, T}},
+    inp_rotation::StaticMatrix{N_out, N_in, <:Number},
+    inp_translation::StaticVector{N_out, <:Number},
+    inp_background::Number,
+    inp_weight::Number;
+    accumulate_ds_dpoints=false,
+    points::AbstractMatrix{T} = similar(inp_points, T, (N_in, length(inp_points)))
+) where {N_in, N_out, T<:Number} =raster_pullback!(
+    ds_dout,
+    inp_points,
+    inp_rotation,
+    inp_translation,
+    inp_background,
+    inp_weight,
+    points;
+    accumulate_ds_dpoints,
+)
+
+# batch of images
+raster_pullback!(
+    ds_dout::AbstractArray{<:Number},
+    inp_points::AbstractVector{<:StaticVector{N_in, TP}},
+    inp_rotation::AbstractVector{<:StaticMatrix{N_out, N_in, TR}},
+    inp_translation::AbstractVector{<:StaticVector{N_out, TT}},
+    inp_background::AbstractVector{TB},
+    inp_weight::AbstractVector{TW};
+    points::AbstractArray{TP, 3} = similar(inp_points, TP, (N_in, length(inp_points), min(length(inp_rotation), Threads.nthreads()))),
+    rotation::AbstractArray{TR, 3} = similar(inp_rotation, TR, (N_out, N_in, length(inp_rotation))),
+    translation::AbstractMatrix{TT} = similar(inp_translation, TT, (N_out, length(inp_translation))),
+    background::AbstractVector{TB} = similar(inp_background),
+    weight::AbstractVector{TW} = similar(inp_weight),
+) where {N_in, N_out, TP<:Number, TR<:Number, TT<:Number, TB<:Number, TW<:Number} = raster_pullback!(
+    ds_dout,
+    inp_points,
+    inp_rotation,
+    inp_translation,
+    inp_background,
+    inp_weight,
+    points,
+    rotation,
+    translation,
+    background,
+    weight,
+)
+
+
+###############################################
+# Step 4: Error on inconsistent dimensions
+###############################################
+
+# single image
+raster_pullback!(
+    ::AbstractArray{<:Number, N_out},
+    ::AbstractVector{<:StaticVector{N_in, <:Number}},
+    ::StaticMatrix{N_out_rot, N_in_rot, <:Number},
+    ::StaticVector{N_out_trans, <:Number},
+    ::Number,
+    ::Number,
+    ::AbstractMatrix{<:Number};
+    kwargs...
+) where {N_in, N_out, N_in_rot, N_out_rot, N_out_trans} = error_dimensions(
+    N_in,
+    N_out,
+    N_in_rot,
+    N_out_rot,
+    N_out_trans
+)
+
+# batch of images
+raster_pullback!(
+    ::AbstractArray{<:Number, N_out_p1},
+    ::AbstractVector{<:StaticVector{N_in, <:Number}},
+    ::AbstractVector{<:StaticMatrix{N_out_rot, N_in_rot, <:Number}},
+    ::AbstractVector{<:StaticVector{N_out_trans, <:Number}},
+    ::AbstractVector{<:Number},
+    ::AbstractVector{<:Number},
+    ::AbstractArray{<:Number, 3},
+    ::AbstractArray{<:Number, 3},
+    ::AbstractMatrix{<:Number},
+    ::AbstractVector{<:Number},
+    ::AbstractVector{<:Number},
+) where {N_in, N_out_p1, N_in_rot, N_out_rot, N_out_trans} = error_dimensions(
+    N_in,
+    N_out_p1 - 1,
+    N_in_rot,
+    N_out_rot,
+    N_out_trans
+)
+
+function error_dimensions(N_in, N_out, N_in_rot, N_out_rot, N_out_trans)
+    if N_out_trans != N_out
+        error("Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!")
+    end
+    if N_out_rot != N_out
+        error("Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!")
+    end
+    if N_in_rot != N_in
+        error("Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!")
+    end
+    error("Dispatch error. Should not arrive here. Please file a bug.")
+end
 
 default_background(rotation::AbstractMatrix, T=eltype(rotation)) = zero(T)
 

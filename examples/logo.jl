@@ -1,21 +1,24 @@
 using DiffPointRasterisation
 using FFTW
 using Images
+using LinearAlgebra
+using StaticArrays
 using Zygote
 
 load_image(path) = load(path) .|> Gray |> channelview
 
-init_points(n) = (rand(Float32, 2, n) .- 0.5f0) .* Float32[2;2;;]
+init_points(n) = [2 * rand(Float32, 2) .- 1f0 for _ in 1:n]
 
 target_image = load_image("data/julia.png")
 
 points = init_points(5_000)
-rotation = Float32[1;0;;0;1;;]
+rotation = I(2)
 translation = zeros(Float32, 2)
 
 function model(points, log_bandwidth, log_weight) 
+    # raster points to 2d-image
     rough_image = raster(size(target_image), points, rotation, translation, 0f0, exp(log_weight))
-    # smooth with gaussian kernel
+    # smooth image with gaussian kernel
     kernel = gaussian_kernel(log_bandwidth, size(target_image)...)
     image = convolve_image(rough_image, kernel)
     image
@@ -36,18 +39,20 @@ convolve_image(image, kernel) = irfft(rfft(image) .* rfft(kernel), size(image, 1
 
 function loss(points, log_bandwidth, log_weight)
     model_image = model(points, log_bandwidth, log_weight)
-    sum((model_image .- target_image).^2) + sum(points.^2)
+    # squared error plus regularization term for points
+    sum((model_image .- target_image).^2) + sum(stack(points).^2)
 end
 
 logrange(s, e, n) = round.(Int, exp.(range(log(s), log(e), n)))
 
 function langevin!(points, log_bandwidth, log_weight, eps, n, update_bandwidth=true, update_weight=true, eps_after_init=eps; n_init=n, n_logs_init=15)
+    # Langevin sampling for points and optionally log_bandwidth and log_weight.
     logs_init = logrange(1, n_init, n_logs_init)
     log_every = false
     logstep = 1
     for i in 1:n
         l, grads = Zygote.withgradient(loss, points, log_bandwidth, log_weight)
-        points .+= sqrt(eps) .* randn(Float32, size(points)) .- eps .* 0.5f0 .* grads[1]
+        points .+= sqrt(eps) .* reinterpret(reshape, SVector{2, Float32}, randn(Float32, 2, length(points))) .- eps .* 0.5f0 .* grads[1]
         if update_bandwidth
             log_bandwidth += sqrt(eps) * randn(Float32) - eps * 0.5f0 * grads[2]
         end
@@ -57,6 +62,7 @@ function langevin!(points, log_bandwidth, log_weight, eps, n, update_bandwidth=t
 
         if i == n_init
             log_every = true
+            eps = eps_after_init
         end
         if log_every || (i in logs_init)
             println("iteration $logstep, $i: loss = $l, bandwidth = $(exp(log_bandwidth)), weight = $(exp(log_weight))")
@@ -68,4 +74,4 @@ function langevin!(points, log_bandwidth, log_weight, eps, n, update_bandwidth=t
     points, log_bandwidth
 end
 
-isinteractive() || langevin!(points, log(0.5f0), 0f0, 5f-6, 6_030, false, true, 5f-4; n_init=6_000)
+isinteractive() || langevin!(points, log(0.5f0), 0f0, 5f-6, 6_030, false, true, 4f-5; n_init=6_000)

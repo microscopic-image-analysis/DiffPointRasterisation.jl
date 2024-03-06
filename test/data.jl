@@ -26,21 +26,25 @@ eachcol(points_array) .= points
 const points_reinterp = reinterpret(reshape, SVector{3, Float64}, points_array)
 const more_points = [0.4 * @SVector randn(3) for _ in 1:100_000]
 
-const rotation = rand(QuatRotation)
-const rotations_static = rand(QuatRotation{Float64}, batch_size)::Vector{<:StaticMatrix}
+const rotation = rand(RotMatrix3{Float64})
+const rotations_static = rand(RotMatrix3{Float64}, batch_size)::Vector{<:StaticMatrix}
 const rotations = (Array.(rotations_static))::Vector{Matrix{Float64}}
 const rotations_array = Array{Float64, 3}(undef, 3, 3, batch_size)
 eachslice(rotations_array; dims=3) .= rotations
 const rotations_reinterp = reinterpret(reshape, SMatrix{3, 3, Float64, 9}, reshape(rotations_array, 9, :))
 const rotation_tangent = Array(rand(RotMatrix3))
-const rotation_tangents = stack(rand(RotMatrix3, batch_size))
+const rotation_tangents_static = rand(RotMatrix3{Float64}, batch_size)::Vector{<:StaticMatrix}
+const rotation_tangents = (Array.(rotation_tangents_static))::Vector{Matrix{Float64}}
 
 const projection = P * rand(RotMatrix3)
-const projections_static = Ref(P) .* rand(QuatRotation{Float64}, batch_size)
+const projections_static = Ref(P) .* rand(RotMatrix3{Float64}, batch_size)
 const projections = (Array.(projections_static))::Vector{Matrix{Float64}}
 const projections_array = Array{Float64, 3}(undef, 2, 3, batch_size)
 eachslice(projections_array; dims=3) .= projections
 const projections_reinterp = reinterpret(reshape, SMatrix{2, 3, Float64, 6}, reshape(projections_array, 6, :))
+const projection_tangent = Array(P * rand(RotMatrix3))
+const projection_tangents_static = Ref(P) .* rand(RotMatrix3{Float64}, batch_size)
+const projection_tangents = (Array.(projection_tangents_static))::Vector{Matrix{Float64}}
 
 const translation_3d = 0.1 * @SVector randn(3)
 const translation_2d = 0.1 * @SVector randn(2)
