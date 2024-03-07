@@ -38,15 +38,16 @@ function raster(
 )
     eltypes = deep_eltype.(args)
     T = promote_type(eltypes...)
+    points = args[1]
     rotation = args[2]
     if isa(rotation, AbstractMatrix)
         # non-batched
-        out = similar(rotation, T, grid_size)
+        out = similar(points, T, grid_size)
     else
         # batched
         @assert rotation isa AbstractVector{<:AbstractMatrix}
         batch_size = length(rotation)
-        out = similar(rotation, T, (grid_size..., batch_size))
+        out = similar(points, T, (grid_size..., batch_size))
     end
     raster!(out, args...)
 end
@@ -196,9 +197,9 @@ raster_pullback!(
     inp_translation::StaticVector{N_out, <:Number},
     inp_background::Number,
     inp_weight::Number;
-    accumulate_ds_dpoints=false,
-    points::AbstractMatrix{T} = similar(inp_points, T, (N_in, length(inp_points)))
-) where {N_in, N_out, T<:Number} =raster_pullback!(
+    points::AbstractMatrix{T} = default_ds_dpoints_single(inp_points, N_in),
+    kwargs...
+) where {N_in, N_out, T<:Number} = raster_pullback!(
     ds_dout,
     inp_points,
     inp_rotation,
@@ -206,7 +207,7 @@ raster_pullback!(
     inp_background,
     inp_weight,
     points;
-    accumulate_ds_dpoints,
+    kwargs...
 )
 
 # batch of images
@@ -217,7 +218,7 @@ raster_pullback!(
     inp_translation::AbstractVector{<:StaticVector{N_out, TT}},
     inp_background::AbstractVector{TB},
     inp_weight::AbstractVector{TW};
-    points::AbstractArray{TP, 3} = similar(inp_points, TP, (N_in, length(inp_points), min(length(inp_rotation), Threads.nthreads()))),
+    points::AbstractArray{TP} = default_ds_dpoints_batched(inp_points, N_in, length(inp_rotation)),
     rotation::AbstractArray{TR, 3} = similar(inp_rotation, TR, (N_out, N_in, length(inp_rotation))),
     translation::AbstractMatrix{TT} = similar(inp_translation, TT, (N_out, length(inp_translation))),
     background::AbstractVector{TB} = similar(inp_background),
@@ -267,7 +268,7 @@ raster_pullback!(
     ::AbstractVector{<:StaticVector{N_out_trans, <:Number}},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
-    ::AbstractArray{<:Number, 3},
+    ::AbstractArray{<:Number},
     ::AbstractArray{<:Number, 3},
     ::AbstractMatrix{<:Number},
     ::AbstractVector{<:Number},
@@ -304,6 +305,10 @@ default_weight(rotation::AbstractMatrix, T=eltype(rotation)) = one(T)
 default_weight(rotation::AbstractVector{<:AbstractMatrix}, T=eltype(eltype(rotation))) = Ones(T, length(rotation))
 
 default_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = Ones(T, size(rotation, 3))
+
+default_ds_dpoints_single(points::AbstractVector{<:AbstractVector{TP}}, N_in) where {TP<:Number} = similar(points, TP, (N_in, length(points)))
+
+default_ds_dpoints_batched(points::AbstractVector{<:AbstractVector{TP}}, N_in, batch_size) where {TP<:Number} = similar(points, TP, (N_in, length(points), min(batch_size, Threads.nthreads())))
 
 
 @testitem "raster interface" begin

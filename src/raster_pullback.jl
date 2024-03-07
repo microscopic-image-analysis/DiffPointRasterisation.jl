@@ -1,33 +1,34 @@
 # single image
 function raster_pullback!(
-    ds_dout::AbstractArray{T, N_out},
+    ds_dout::AbstractArray{<:Number, N_out},
     points::AbstractVector{<:StaticVector{N_in, <:Number}},
-    rotation::StaticMatrix{N_out, N_in, <:Number},
-    translation::StaticVector{N_out, <:Number},
+    rotation::StaticMatrix{N_out, N_in, TR},
+    translation::StaticVector{N_out, TT},
     background::Number,
-    weight::Number,
-    ds_dpoints::AbstractMatrix{<:Number};
+    weight::TW,
+    ds_dpoints::AbstractMatrix{TP};
     accumulate_ds_dpoints=false,
-) where {N_in, N_out, T<:Number}
+) where {N_in, N_out, TP<:Number, TR<:Number, TT<:Number, TW<:Number}
+    T = promote_type(eltype(ds_dout), TP, TR, TT, TW)
     @argcheck size(ds_dpoints, 1) == N_in
     # The strategy followed here is to redo some of the calculations
     # made in the forward pass instead of caching them in the forward
     # pass and reusing them here.
-    accumulate_ds_dpoints || fill!(ds_dpoints, zero(T))
+    accumulate_ds_dpoints || fill!(ds_dpoints, zero(TP))
 
-    origin = (-@SVector ones(T, N_out)) - translation
+    origin = (-@SVector ones(TT, N_out)) - translation
     scale = SVector{N_out, T}(size(ds_dout)) / 2 
     shifts=voxel_shifts(Val(N_out))
     all_density_idxs = CartesianIndices(ds_dout)
 
     # initialize some output for accumulation
-    ds_dtranslation = @SVector zeros(T, N_out)
-    ds_drotation = @SMatrix zeros(T, N_out, N_in)
-    ds_dweight = zero(T)
+    ds_dtranslation = @SVector zeros(TT, N_out)
+    ds_drotation = @SMatrix zeros(TR, N_out, N_in)
+    ds_dweight = zero(TW)
 
     # loop over points
     for (pt_idx, point) in enumerate(points)
-        point = SVector{N_in, T}(point)
+        point = SVector{N_in, TP}(point)
         coord_reference_voxel, deltas = reference_coordinate_and_deltas(
             point,
             rotation,
@@ -66,22 +67,22 @@ end
 # batch of images
 function raster_pullback!(
     ds_dout::AbstractArray{<:Number, N_out_p1},
-    points::AbstractVector{<:StaticVector{N_in, TP}},
-    rotation::AbstractVector{<:StaticMatrix{N_out, N_in, TR}},
-    translation::AbstractVector{<:StaticVector{N_out, TT}},
-    background::AbstractVector{TB},
-    weight::AbstractVector{TW},
-    ds_dpoints::AbstractArray{TP, 3},
-    ds_drotation::AbstractArray{TR, 3},
-    ds_dtranslation::AbstractMatrix{TT},
-    ds_dbackground::AbstractVector{TB},
-    ds_dweight::AbstractVector{TW},
-) where {N_in, N_out, N_out_p1, TP<:Number, TR<:Number, TT<:Number, TB<:Number, TW<:Number}
+    points::AbstractVector{<:StaticVector{N_in, <:Number}},
+    rotation::AbstractVector{<:StaticMatrix{N_out, N_in, <:Number}},
+    translation::AbstractVector{<:StaticVector{N_out, <:Number}},
+    background::AbstractVector{<:Number},
+    weight::AbstractVector{<:Number},
+    ds_dpoints::AbstractArray{<:Number, 3},
+    ds_drotation::AbstractArray{<:Number, 3},
+    ds_dtranslation::AbstractMatrix{<:Number},
+    ds_dbackground::AbstractVector{<:Number},
+    ds_dweight::AbstractVector{<:Number},
+) where {N_in, N_out, N_out_p1}
     batch_axis = axes(ds_dout, N_out_p1)
     @argcheck N_out == N_out_p1 - 1
     @argcheck batch_axis == axes(rotation, 1) == axes(translation, 1) == axes(background, 1) == axes(weight, 1)
     @argcheck batch_axis == axes(ds_drotation, 3) == axes(ds_dtranslation, 2) == axes(ds_dbackground, 1) == axes(ds_dweight, 1)
-    fill!(ds_dpoints, zero(TP))
+    fill!(ds_dpoints, zero(eltype(ds_dpoints)))
 
     n_threads = size(ds_dpoints, 3)
 
@@ -146,7 +147,7 @@ function interpolation_weight(n, N, deltas, shift)
 end
 
 @testitem "raster_pullback! inference and allocations" begin
-    using BenchmarkTools, CUDA
+    using BenchmarkTools, CUDA, Adapt
     include("../test/data.jl")
     ds_dout_3d = randn(D.grid_size_3d)
     ds_dout_3d_batched = randn(D.grid_size_3d..., D.batch_size)
@@ -189,6 +190,11 @@ end
         ds_dweights
     )
 
+    function to_cuda(args)
+        args_cu = adapt(CuArray, args)
+        Base.setindex(args_cu, args_cu[7][:, :, 1], 7)  # ds_dpoint without batch dim
+    end
+
     # check type stability
     # single image
     @inferred DiffPointRasterisation.raster_pullback!(ds_dout_3d, D.points_static, D.rotation, D.translation_3d, D.background, D.weight, ds_dpoints)
@@ -197,9 +203,9 @@ end
     @inferred DiffPointRasterisation.raster_pullback!(args_batched_3d...)
     @inferred DiffPointRasterisation.raster_pullback!(args_batched_2d...)
     if CUDA.functional()
-        cu_args_3d = cu.(args_batched_3d)
+        cu_args_3d = to_cuda(args_batched_3d)
         @inferred DiffPointRasterisation.raster_pullback!(cu_args_3d...)
-        cu_args_2d = cu.(args_batched_2d)
+        cu_args_2d = to_cuda(args_batched_2d)
         @inferred DiffPointRasterisation.raster_pullback!(cu_args_2d...)
     end
 
