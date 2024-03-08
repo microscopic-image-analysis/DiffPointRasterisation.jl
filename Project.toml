@@ -1,7 +1,7 @@
 name = "DiffPointRasterisation"
 uuid = "f984992d-3c45-4382-99a1-cf20f5c47c61"
 authors = ["Wolfhart Feldmeier <wolfhart.feldmeier@uni-jena.de>"]
-version = "1.0.0-DEV"
+version = "0.1.0"
 
 [deps]
 ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
