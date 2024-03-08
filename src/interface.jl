@@ -19,14 +19,40 @@ pixels/voxels of the output array (according to the closeness of the
 voxel center to the coordinates of point ``\\hat{p}``) via
 N-linear interpolation.
 
+# Arguments
+- `grid_size`: Tuple of integers defining the output dimensions
+- `points::AbstractVector{<:AbstractVector}`: A vector of same length
+  vectors representing points
+- `rotation`: Either a single matrix(-like object) or a vector of such,
+  that linearly transform(s) `points` before rasterisation.
+- `translation`: Either a single vector or a vector of such, that
+  translates `points` *after* `rotation`. If `rotation` includes a
+  projection, `translation` thus needs to have the same length as
+  `rotation * points[i]`.
+- `background`: Either a single number or a vector of such.
+- `weight`: Either a single number or a vector of such.
+
 `rotation`, `translation`, `background` and `weight` can have an 
-additional "batch" dimension (as last dimension, and the axis
-along this dimension must agree across the four arguments).
-In this case, the output will also have that additional dimension.
-This is useful if the same scene/points should be rastered from
-different perspectives. 
+additional "batch" dimension (by providing them as vectors of single
+parameters. The length of these vectors must be the same for all four
+arguments).
+In this case, the output array will have dimensionality +1 with an
+additional axis on last position corresponding to the number of
+elements in the batch.
+See [Raster a single point cloud to a batch of poses](@ref) for more
+details.
+
+See also: [`raster!`](@ref)
 """
 function raster end
+
+"""
+    raster!(out, points, rotation, translation, [background, weight])
+
+Interpolate points (multi-) linearly into the Nd-array `out`.
+In-place version of [`raster`](@ref). See there for details.
+"""
+function raster! end
 
 ###############################################
 # Step 1: Allocate output
@@ -128,7 +154,7 @@ end
         [points, rotation, translation, background, weight]
     )
 
-Pullback for `raster(grid_size, args...)`/`raster!(out, args...)`.
+Pullback for [`raster`](@ref) / [`raster!`](@ref).
 
 Take as input `ds_dout` the sensitivity of some quantity (`s` for "scalar")
 to the *output* `out` of the function `out = raster(grid_size, args...)`
@@ -145,6 +171,7 @@ For example to provide a pre-allocated array for the sensitivity of `s` to
 the `translation` argument of `raster`, do:
 `sensitivities = raster_pullback!(ds_dout, args...; translation = [zeros(2) for _ in 1:8])`
 for 2-dimensional points and a batch size of 8.
+See also [Raster a single point cloud to a batch of poses](@ref)
 """
 function raster_pullback! end
 

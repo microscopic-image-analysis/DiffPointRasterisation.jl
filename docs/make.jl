@@ -7,6 +7,7 @@ makedocs(;
     modules=[DiffPointRasterisation],
     pages=[
         "Home" => "index.md",
+        "Batch of poses" => "batch.md",
         "API" => "api.md",
     ],
     checkdocs=:exports,
