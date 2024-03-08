@@ -14,7 +14,7 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/trahflow/DiffPointRasterisation.jl.git",
+    repo="github.com/microscopic-image-analysis/DiffPointRasterisation.jl.git",
     devbranch="main",
     push_preview=true,
 )
