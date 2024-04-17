@@ -8,18 +8,20 @@ function raster!(
     rotation::AbstractVector{<:StaticMatrix{N_out, N_in, <:Number}},
     translation::AbstractVector{<:StaticVector{N_out, <:Number}},
     background::AbstractVector{<:Number},
-    weight::AbstractVector{<:Number},
+    out_weight::AbstractVector{<:Number},
+    point_weight::AbstractVector{<:Number},
 ) where {T<:Number, N_in, N_out, N_out_p1}
     @argcheck N_out == N_out_p1 - 1 DimensionMismatch
     out_batch_dim = ndims(out)
     batch_size = size(out, out_batch_dim)
-    @argcheck batch_size == length(rotation) == length(translation) == length(background) == length(weight) DimensionMismatch
+    @argcheck batch_size == length(rotation) == length(translation) == length(background) == length(out_weight) DimensionMismatch
     n_points = length(points)
+    @argcheck length(point_weight) == n_points
 
     scale = SVector{N_out, T}(size(out)[1:end-1]) / T(2)
     shifts=voxel_shifts(Val(N_out))
     out .= reshape(background, ntuple(_ -> 1, Val(N_out))..., length(background))
-    args = (out, points, rotation, translation, weight, shifts, scale)
+    args = (out, points, rotation, translation, out_weight, point_weight, shifts, scale)
     backend = get_backend(out)
     ndrange = (2^N_out, n_points, batch_size)
     workgroup_size = 1024 
@@ -27,13 +29,13 @@ function raster!(
     out
 end
 
-@kernel function raster_kernel!(out::AbstractArray{T}, points, rotations, translations::AbstractVector{<:StaticVector{N_out}}, weights, shifts, scale) where {T, N_out}
+@kernel function raster_kernel!(out::AbstractArray{T}, points, rotations, translations::AbstractVector{<:StaticVector{N_out}}, out_weights, point_weights, shifts, scale) where {T, N_out}
     neighbor_voxel_id, point_idx, batch_idx = @index(Global, NTuple)
 
     point = @inbounds points[point_idx]
     rotation = @inbounds rotations[batch_idx]
     translation = @inbounds translations[batch_idx]
-    weight = @inbounds weights[batch_idx]
+    weight = @inbounds out_weights[batch_idx] * point_weights[point_idx]
     shift = @inbounds shifts[neighbor_voxel_id]
     origin = (-@SVector ones(T, N_out)) - translation
 
@@ -123,11 +125,11 @@ end
     translation_1pix_down = [0.4, 0.0]
 
     zero_background = 0.0
-    weight = 4.0
+    out_weight = 4.0
 
     # -------- interpolations ---------
 
-    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, weight)
+    out = raster(grid_size, points_single_center, no_rotation, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
@@ -136,7 +138,7 @@ end
         0 0 0 0 0
     ]
     
-    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, weight)
+    out = raster(grid_size, points_single_1pix_right, no_rotation, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
@@ -145,7 +147,7 @@ end
         0 0 0 0 0
     ]
 
-    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, weight)
+    out = raster(grid_size, points_single_halfpix_down, no_rotation, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
@@ -154,7 +156,7 @@ end
         0 0 0 0 0
     ]
 
-    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, weight)
+    out = raster(grid_size, points_single_halfpix_down_and_right, no_rotation, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
@@ -165,7 +167,7 @@ end
 
     # -------- translations ---------
 
-    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, weight)
+    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 4 0 0
@@ -174,7 +176,7 @@ end
         0 0 0 0 0
     ]
 
-    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, weight)
+    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 2 2 0
@@ -183,7 +185,7 @@ end
         0 0 0 0 0
     ]
 
-    out = raster(grid_size, points_four_cross, no_rotation, translation_1pix_down, zero_background, weight)
+    out = raster(grid_size, points_four_cross, no_rotation, translation_1pix_down, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 0 0 0
@@ -194,12 +196,32 @@ end
 
     # -------- rotations ---------
 
-    out = raster(grid_size, points_single_1pix_right, rotation_90_deg, no_translation, zero_background, weight)
+    out = raster(grid_size, points_single_1pix_right, rotation_90_deg, no_translation, zero_background, out_weight)
     @test out ≈ [
         0 0 0 0 0
         0 0 4 0 0
         0 0 0 0 0
         0 0 0 0 0
+        0 0 0 0 0
+    ]
+
+    # -------- point weights ---------
+
+    out = raster(grid_size, points_four_cross, no_rotation, no_translation, zero_background, 1.0, [1.0, 2.0, 3.0, 4.0])
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 2 0 0
+        0 3 0 1 0
+        0 0 4 0 0
+        0 0 0 0 0
+    ]
+
+    out = raster(grid_size, points_four_cross, no_rotation, translation_halfpix_right, zero_background, 2.0, [1.0, 2.0, 3.0, 4.0])
+    @test out ≈ [
+        0 0 0 0 0
+        0 0 2 2 0
+        0 3 3 1 1
+        0 0 4 4 0
         0 0 0 0 0
     ]
 end
@@ -252,20 +274,20 @@ end
     out_3d_batched = zeros(D.grid_size_3d..., D.batch_size)
 
     for (out_i, args...) in zip(eachslice(out_3d, dims=4), D.rotations, D.translations_3d, D.backgrounds, D.weights)
-        raster!(out_i, D.more_points, args...)
+        raster!(out_i, D.more_points, args..., D.more_point_weights)
     end
 
-    DiffPointRasterisation.raster!(out_3d_batched, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights)
+    DiffPointRasterisation.raster!(out_3d_batched, D.more_points, D.rotations, D.translations_3d, D.backgrounds, D.weights, D.more_point_weights)
 
     #  raster_project
     out_2d = zeros(D.grid_size_2d..., D.batch_size)
     out_2d_batched = zeros(D.grid_size_2d..., D.batch_size)
 
     for (out_i, args...) in zip(eachslice(out_2d, dims=3), D.projections, D.translations_2d, D.backgrounds, D.weights)
-        DiffPointRasterisation.raster!(out_i, D.more_points, args...)
+        DiffPointRasterisation.raster!(out_i, D.more_points, args..., D.more_point_weights)
     end
 
-    DiffPointRasterisation.raster!(out_2d_batched, D.more_points, D.projections, D.translations_2d, D.backgrounds, D.weights)
+    DiffPointRasterisation.raster!(out_2d_batched, D.more_points, D.projections, D.translations_2d, D.backgrounds, D.weights, D.more_point_weights)
 
     @test out_2d_batched ≈ out_2d
 end

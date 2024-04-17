@@ -65,4 +65,13 @@ const backgrounds = collect(1:1.0:batch_size)
 const weight = rand()
 const weights = 10 .* rand(batch_size)
 
+const point_weights = let 
+    w = rand(length(points))
+    w ./ sum(w)
+end
+const more_point_weights = let 
+    w = rand(length(more_points))
+    w ./ sum(w)
+end
+
 end  # module D
