@@ -12,19 +12,16 @@ using ArgCheck
 using FillArrays
 using StaticArrays
 
+const CuOrFillArray{T,N} = Union{CuArray{T,N},FillArrays.AbstractFill{T,N}}
 
-const CuOrFillArray{T, N} = Union{CuArray{T, N}, FillArrays.AbstractFill{T, N}}
-
-
-const CuOrFillVector{T} = CuOrFillArray{T, 1}
-
+const CuOrFillVector{T} = CuOrFillArray{T,1}
 
 function raster_pullback_kernel!(
     ::Type{T},
     ds_dout,
     points::AbstractVector{<:StaticVector{N_in}},
-    rotations::AbstractVector{<:StaticMatrix{N_out, N_in, TR}},
-    translations::AbstractVector{<:StaticVector{N_out, TT}},
+    rotations::AbstractVector{<:StaticMatrix{N_out,N_in,TR}},
+    translations::AbstractVector{<:StaticVector{N_out,TT}},
     out_weights,
     point_weights,
     shifts,
@@ -35,8 +32,7 @@ function raster_pullback_kernel!(
     ds_dtranslation,
     ds_dout_weight,
     ds_dpoint_weight,
-
-) where {T, TR, TT, N_in, N_out}
+) where {T,TR,TT,N_in,N_out}
     n_voxel = blockDim().z
     points_per_workgroup = blockDim().x
     batchsize_per_workgroup = blockDim().y
@@ -74,24 +70,27 @@ function raster_pullback_kernel!(
         origin = (-@SVector ones(TT, N_out)) - translation
 
         coord_reference_voxel, deltas = DiffPointRasterisation.reference_coordinate_and_deltas(
-            point,
-            rotation,
-            origin,
-            scale,
+            point, rotation, origin, scale
         )
-        voxel_idx = CartesianIndex(CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx)
-
+        voxel_idx = CartesianIndex(
+            CartesianIndex(Tuple(coord_reference_voxel)) + CartesianIndex(shift), batch_idx
+        )
 
         ds_dweight_local = zero(T)
         if voxel_idx in CartesianIndices(ds_dout)
             @inbounds ds_dweight_local = DiffPointRasterisation.voxel_weight(
-                deltas,
-                shift,
-                ds_dout[voxel_idx],
+                deltas, shift, ds_dout[voxel_idx]
             )
 
             factor = ds_dout[voxel_idx] * out_weight * point_weight
-            ds_dcoord_part = SVector(factor .* ntuple(n -> DiffPointRasterisation.interpolation_weight(n, N_out, deltas, shift), Val(N_out)))
+            ds_dcoord_part = SVector(
+                factor .* ntuple(
+                    n -> DiffPointRasterisation.interpolation_weight(
+                        n, N_out, deltas, shift
+                    ),
+                    Val(N_out),
+                ),
+            )
             @inbounds ds_dpoint_rot_shared[:, s, b] .= ds_dcoord_part .* scale
         else
             @inbounds ds_dpoint_rot_shared[:, s, b] .= zero(T)
@@ -136,7 +135,7 @@ function raster_pullback_kernel!(
             j = 1
             while j <= N_in
                 val = coef * point[j]
-                @inbounds CUDA.@atomic ds_drotation[dim, j, batch_idx] += val 
+                @inbounds CUDA.@atomic ds_drotation[dim, j, batch_idx] += val
                 j += 1
             end
         end
@@ -161,7 +160,7 @@ function raster_pullback_kernel!(
         sync_threads()
         idx = 2 * stride * (b - 1) + 1
         if idx <= batchsize_per_workgroup
-            dim = s 
+            dim = s
             while dim <= N_in
                 other_val_p = if idx + stride <= batchsize_per_workgroup
                     ds_dpoint_shared[dim, idx + stride]
@@ -181,7 +180,7 @@ function raster_pullback_kernel!(
         sync_threads()
         idx = 2 * stride * (thread - 1) + 1
         if idx <= n_threads_per_workgroup
-            other_val_w = if idx + stride <= n_threads_per_workgroup 
+            other_val_w = if idx + stride <= n_threads_per_workgroup
                 ds_dpoint_weight_shared[idx + stride]
             else
                 zero(T)
@@ -207,54 +206,68 @@ function raster_pullback_kernel!(
         @inbounds CUDA.@atomic ds_dpoint_weight[point_idx] += val_w
     end
 
-    nothing
+    return nothing
 end
 
 # single image
-raster_pullback!(
-    ds_dout::CuArray{<:Number, N_out},
-    points::AbstractVector{<:StaticVector{N_in, <:Number}},
-    rotation::StaticMatrix{N_out, N_in, <:Number},
-    translation::StaticVector{N_out, <:Number},
+function raster_pullback!(
+    ds_dout::CuArray{<:Number,N_out},
+    points::AbstractVector{<:StaticVector{N_in,<:Number}},
+    rotation::StaticMatrix{N_out,N_in,<:Number},
+    translation::StaticVector{N_out,<:Number},
     background::Number,
     out_weight::Number,
     point_weight::CuOrFillVector{<:Number},
     ds_dpoints::AbstractMatrix{<:Number},
     ds_dpoint_weight::AbstractVector{<:Number};
-    kwargs...
-) where {N_in, N_out} = error("Not implemented: raster_pullback! for single image not implemented on GPU. Consider using CPU arrays")
+    kwargs...,
+) where {N_in,N_out}
+    return error(
+        "Not implemented: raster_pullback! for single image not implemented on GPU. Consider using CPU arrays",
+    )
+end
 
 # batch of images
 function DiffPointRasterisation.raster_pullback!(
-    ds_dout::CuArray{<:Number, N_out_p1},
-    points::CuVector{<:StaticVector{N_in, <:Number}},
-    rotation::CuVector{<:StaticMatrix{N_out, N_in, <:Number}},
-    translation::CuVector{<:StaticVector{N_out, <:Number}},
+    ds_dout::CuArray{<:Number,N_out_p1},
+    points::CuVector{<:StaticVector{N_in,<:Number}},
+    rotation::CuVector{<:StaticMatrix{N_out,N_in,<:Number}},
+    translation::CuVector{<:StaticVector{N_out,<:Number}},
     background::CuOrFillVector{<:Number},
     out_weight::CuOrFillVector{<:Number},
     point_weight::CuOrFillVector{<:Number},
     ds_dpoints::CuMatrix{TP},
-    ds_drotation::CuArray{TR, 3},
+    ds_drotation::CuArray{TR,3},
     ds_dtranslation::CuMatrix{TT},
     ds_dbackground::CuVector{<:Number},
     ds_dout_weight::CuVector{OW},
     ds_dpoint_weight::CuVector{PW},
-) where {N_in, N_out, N_out_p1, TP<:Number, TR<:Number, TT<:Number, OW<:Number, PW<:Number}
+) where {N_in,N_out,N_out_p1,TP<:Number,TR<:Number,TT<:Number,OW<:Number,PW<:Number}
     T = promote_type(eltype(ds_dout), TP, TR, TT, OW, PW)
     batch_axis = axes(ds_dout, N_out_p1)
     @argcheck N_out == N_out_p1 - 1
-    @argcheck batch_axis == axes(rotation, 1) == axes(translation, 1) == axes(background, 1) == axes(out_weight, 1)
-    @argcheck batch_axis == axes(ds_drotation, 3) == axes(ds_dtranslation, 2) == axes(ds_dbackground, 1) == axes(ds_dout_weight, 1)
+    @argcheck batch_axis ==
+        axes(rotation, 1) ==
+        axes(translation, 1) ==
+        axes(background, 1) ==
+        axes(out_weight, 1)
+    @argcheck batch_axis ==
+        axes(ds_drotation, 3) ==
+        axes(ds_dtranslation, 2) ==
+        axes(ds_dbackground, 1) ==
+        axes(ds_dout_weight, 1)
     @argcheck N_out == N_out_p1 - 1
 
     n_points = length(points)
     @argcheck length(ds_dpoint_weight) == n_points
     batch_size = length(batch_axis)
 
-    ds_dbackground = vec(sum!(reshape(ds_dbackground, ntuple(_ -> 1, Val(N_out))..., batch_size), ds_dout))
+    ds_dbackground = vec(
+        sum!(reshape(ds_dbackground, ntuple(_ -> 1, Val(N_out))..., batch_size), ds_dout)
+    )
 
-    scale = SVector{N_out, T}(size(ds_dout)[1:end-1]) / T(2)
-    shifts=DiffPointRasterisation.voxel_shifts(Val(N_out))
+    scale = SVector{N_out,T}(size(ds_dout)[1:(end - 1)]) / T(2)
+    shifts = DiffPointRasterisation.voxel_shifts(Val(N_out))
 
     ds_dpoints = fill!(ds_dpoints, zero(TP))
     ds_drotation = fill!(ds_drotation, zero(TR))
@@ -262,19 +275,34 @@ function DiffPointRasterisation.raster_pullback!(
     ds_dout_weight = fill!(ds_dout_weight, zero(OW))
     ds_dpoint_weight = fill!(ds_dpoint_weight, zero(PW))
 
-    args = (T, ds_dout, points, rotation, translation, out_weight, point_weight, shifts, scale, ds_dpoints, ds_drotation, ds_dtranslation, ds_dout_weight, ds_dpoint_weight)
+    args = (
+        T,
+        ds_dout,
+        points,
+        rotation,
+        translation,
+        out_weight,
+        point_weight,
+        shifts,
+        scale,
+        ds_dpoints,
+        ds_drotation,
+        ds_dtranslation,
+        ds_dout_weight,
+        ds_dpoint_weight,
+    )
 
     ndrange = (n_points, batch_size, 2^N_out)
 
     workgroup_size(threads) = (1, min(threads ÷ (2^N_out), batch_size), 2^N_out)
 
     function shmem(threads)
-        _, bs_p_wg, n_voxel =  workgroup_size(threads)
-        ((N_out + 1) * n_voxel + N_in) * bs_p_wg * sizeof(T)
+        _, bs_p_wg, n_voxel = workgroup_size(threads)
+        return ((N_out + 1) * n_voxel + N_in) * bs_p_wg * sizeof(T)
         # ((N_out + 1) * threads + N_in * bs_p_wg) * sizeof(T)
     end
 
-    let kernel = @cuda launch=false raster_pullback_kernel!(args...)
+    let kernel = @cuda launch = false raster_pullback_kernel!(args...)
         config = CUDA.launch_configuration(kernel.fun; shmem)
         workgroup_sz = workgroup_size(config.threads)
         blocks = cld.(ndrange, workgroup_sz)
@@ -292,9 +320,16 @@ function DiffPointRasterisation.raster_pullback!(
     )
 end
 
+function DiffPointRasterisation.default_ds_dpoints_batched(
+    points::CuVector{<:AbstractVector{TP}}, N_in, batch_size
+) where {TP<:Number}
+    return similar(points, TP, (N_in, length(points)))
+end
 
-DiffPointRasterisation.default_ds_dpoints_batched(points::CuVector{<:AbstractVector{TP}}, N_in, batch_size) where {TP<:Number} = similar(points, TP, (N_in, length(points)))
-
-DiffPointRasterisation.default_ds_dpoint_weight_batched(points::CuVector{<:AbstractVector{<:Number}}, T, batch_size) = similar(points, T)
+function DiffPointRasterisation.default_ds_dpoint_weight_batched(
+    points::CuVector{<:AbstractVector{<:Number}}, T, batch_size
+)
+    return similar(points, T)
+end
 
 end  # module

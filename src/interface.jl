@@ -59,10 +59,7 @@ function raster! end
 # Step 1: Allocate output
 ###############################################
 
-function raster(
-    grid_size::Tuple,
-    args...,
-)
+function raster(grid_size::Tuple, args...)
     eltypes = deep_eltype.(args)
     T = promote_type(eltypes...)
     points = args[1]
@@ -76,21 +73,23 @@ function raster(
         batch_size = length(rotation)
         out = similar(points, T, (grid_size..., batch_size))
     end
-    raster!(out, args...)
+    return raster!(out, args...)
 end
 
 deep_eltype(el) = deep_eltype(typeof(el))
 deep_eltype(t::Type) = t
 deep_eltype(t::Type{<:AbstractArray}) = deep_eltype(eltype(t))
 
-
 ###############################################
 # Step 2: Fill default arguments if necessary
 ###############################################
 
-@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any, 3}) = raster!(out, args..., default_background(args[2]))
-@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any, 4}) = raster!(out, args..., default_out_weight(args[2]))
-@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any, 5}) = raster!(out, args..., default_point_weight(args[1]))
+@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any,3}) =
+    raster!(out, args..., default_background(args[2]))
+@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any,4}) =
+    raster!(out, args..., default_out_weight(args[2]))
+@inline raster!(out::AbstractArray{<:Number}, args::Vararg{Any,5}) =
+    raster!(out, args..., default_point_weight(args[1]))
 
 ###############################################
 # Step 3: Convenience interface for single image:
@@ -98,7 +97,7 @@ deep_eltype(t::Type{<:AbstractArray}) = deep_eltype(eltype(t))
 #         length-1 vec of arguments
 ###############################################
 
-raster!(
+function raster!(
     out::AbstractArray{<:Number},
     points::AbstractVector{<:AbstractVector{<:Number}},
     rotation::AbstractMatrix{<:Number},
@@ -106,24 +105,28 @@ raster!(
     background::Number,
     weight::Number,
     point_weight::AbstractVector{<:Number},
-) = drop_last_dim(
-    raster!(
-        append_singleton_dim(out),
-        points,
-        @SVector([rotation]),
-        @SVector([translation]),
-        @SVector([background]),
-        @SVector([weight]),
-        point_weight,
-    )
 )
+    return drop_last_dim(
+        raster!(
+            append_singleton_dim(out),
+            points,
+            @SVector([rotation]),
+            @SVector([translation]),
+            @SVector([background]),
+            @SVector([weight]),
+            point_weight,
+        ),
+    )
+end
 
 ###############################################
 # Step 4: Convert arguments to canonical form,
 #         i.e. vectors of statically sized arrays
 ###############################################
 
-raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector, 6}) = raster!(out, inner_to_sized.(args)...)
+function raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector,6})
+    return raster!(out, inner_to_sized.(args)...)
+end
 
 ###############################################
 # Step 5: Error on inconsistent dimensions
@@ -132,24 +135,30 @@ raster!(out::AbstractArray{<:Number}, args::Vararg{AbstractVector, 6}) = raster!
 # if N_out_rot == N_out_trans this should not be called
 # because the actual implementation specializes on N_out
 function raster!(
-    ::AbstractArray{<:Number, N_out},
-    ::AbstractVector{<:StaticVector{N_in, <:Number}},
-    ::AbstractVector{<:StaticMatrix{N_out_rot, N_in_rot, <:Number}},
-    ::AbstractVector{<:StaticVector{N_out_trans, <:Number}},
+    ::AbstractArray{<:Number,N_out},
+    ::AbstractVector{<:StaticVector{N_in,<:Number}},
+    ::AbstractVector{<:StaticMatrix{N_out_rot,N_in_rot,<:Number}},
+    ::AbstractVector{<:StaticVector{N_out_trans,<:Number}},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
-) where {N_in, N_out, N_in_rot, N_out_rot, N_out_trans}
+) where {N_in,N_out,N_in_rot,N_out_rot,N_out_trans}
     if N_out_trans != N_out
-        error("Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!")
+        error(
+            "Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!",
+        )
     end
     if N_out_rot != N_out
-        error("Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!")
+        error(
+            "Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!",
+        )
     end
     if N_in_rot != N_in
-        error("Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!")
+        error(
+            "Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!",
+        )
     end
-    error("Dispatch error. Should not arrive here. Please file a bug.")
+    return error("Dispatch error. Should not arrive here. Please file a bug.")
 end
 
 # now similar for pullback
@@ -180,15 +189,16 @@ See also [Raster a single point cloud to a batch of poses](@ref)
 """
 function raster_pullback! end
 
-
 ###############################################
 # Step 1: Fill default arguments if necessary
 ###############################################
 
-@inline raster_pullback!(ds_out::AbstractArray{<:Number}, args::Vararg{Any, 3}; kwargs...) = raster_pullback!(ds_out, args..., default_background(args[2]); kwargs...)
-@inline raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{Any, 4}; kwargs...) = raster_pullback!(ds_dout, args..., default_out_weight(args[2]); kwargs...)
-@inline raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{Any, 5}; kwargs...) = raster_pullback!(ds_dout, args..., default_point_weight(args[1]); kwargs...)
-
+@inline raster_pullback!(ds_out::AbstractArray{<:Number}, args::Vararg{Any,3}; kwargs...) =
+    raster_pullback!(ds_out, args..., default_background(args[2]); kwargs...)
+@inline raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{Any,4}; kwargs...) =
+    raster_pullback!(ds_dout, args..., default_out_weight(args[2]); kwargs...)
+@inline raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{Any,5}; kwargs...) =
+    raster_pullback!(ds_dout, args..., default_point_weight(args[1]); kwargs...)
 
 ###############################################
 # Step 2: Convert arguments to canonical form,
@@ -196,7 +206,7 @@ function raster_pullback! end
 ###############################################
 
 # single image
-raster_pullback!(
+function raster_pullback!(
     ds_dout::AbstractArray{<:Number},
     points::AbstractVector{<:AbstractVector{<:Number}},
     rotation::AbstractMatrix{<:Number},
@@ -204,163 +214,202 @@ raster_pullback!(
     background::Number,
     out_weight::Number,
     point_weight::AbstractVector{<:Number};
-    kwargs...
-) = raster_pullback!(
-    ds_dout,
-    inner_to_sized(points),
-    to_sized(rotation),
-    to_sized(translation),
-    background,
-    out_weight,
-    point_weight;
-    kwargs...
+    kwargs...,
 )
+    return raster_pullback!(
+        ds_dout,
+        inner_to_sized(points),
+        to_sized(rotation),
+        to_sized(translation),
+        background,
+        out_weight,
+        point_weight;
+        kwargs...,
+    )
+end
 
 # batch of images
-raster_pullback!(ds_dout::AbstractArray{<:Number}, args::Vararg{AbstractVector, 6}; kwargs...) = raster_pullback!(ds_dout, inner_to_sized.(args)...; kwargs...)
-
+function raster_pullback!(
+    ds_dout::AbstractArray{<:Number}, args::Vararg{AbstractVector,6}; kwargs...
+)
+    return raster_pullback!(ds_dout, inner_to_sized.(args)...; kwargs...)
+end
 
 ###############################################
 # Step 3: Allocate output
 ###############################################
 
 # single image
-raster_pullback!(
-    ds_dout::AbstractArray{<:Number, N_out},
-    inp_points::AbstractVector{<:StaticVector{N_in, TP}},
-    inp_rotation::StaticMatrix{N_out, N_in, <:Number},
-    inp_translation::StaticVector{N_out, <:Number},
+function raster_pullback!(
+    ds_dout::AbstractArray{<:Number,N_out},
+    inp_points::AbstractVector{<:StaticVector{N_in,TP}},
+    inp_rotation::StaticMatrix{N_out,N_in,<:Number},
+    inp_translation::StaticVector{N_out,<:Number},
     inp_background::Number,
     inp_out_weight::Number,
     inp_point_weight::AbstractVector{PW};
-    points::AbstractMatrix{TP} = default_ds_dpoints_single(inp_points, N_in),
-    point_weight::AbstractVector{PW} = similar(inp_points, PW),
-    kwargs...
-) where {N_in, N_out, TP<:Number, PW<:Number} = raster_pullback!(
-    ds_dout,
-    inp_points,
-    inp_rotation,
-    inp_translation,
-    inp_background,
-    inp_out_weight,
-    inp_point_weight,
-    points,
-    point_weight;
-    kwargs...
-)
+    points::AbstractMatrix{TP}=default_ds_dpoints_single(inp_points, N_in),
+    point_weight::AbstractVector{PW}=similar(inp_points, PW),
+    kwargs...,
+) where {N_in,N_out,TP<:Number,PW<:Number}
+    return raster_pullback!(
+        ds_dout,
+        inp_points,
+        inp_rotation,
+        inp_translation,
+        inp_background,
+        inp_out_weight,
+        inp_point_weight,
+        points,
+        point_weight;
+        kwargs...,
+    )
+end
 
 # batch of images
-raster_pullback!(
+function raster_pullback!(
     ds_dout::AbstractArray{<:Number},
-    inp_points::AbstractVector{<:StaticVector{N_in, TP}},
-    inp_rotation::AbstractVector{<:StaticMatrix{N_out, N_in, TR}},
-    inp_translation::AbstractVector{<:StaticVector{N_out, TT}},
+    inp_points::AbstractVector{<:StaticVector{N_in,TP}},
+    inp_rotation::AbstractVector{<:StaticMatrix{N_out,N_in,TR}},
+    inp_translation::AbstractVector{<:StaticVector{N_out,TT}},
     inp_background::AbstractVector{TB},
     inp_out_weight::AbstractVector{OW},
     inp_point_weight::AbstractVector{PW};
-    points::AbstractArray{TP} = default_ds_dpoints_batched(inp_points, N_in, length(inp_rotation)),
-    rotation::AbstractArray{TR, 3} = similar(inp_points, TR, (N_out, N_in, length(inp_rotation))),
-    translation::AbstractMatrix{TT} = similar(inp_points, TT, (N_out, length(inp_translation))),
-    background::AbstractVector{TB} = similar(inp_points, TB, (length(inp_background))),
-    out_weight::AbstractVector{OW} = similar(inp_points, OW, (length(inp_out_weight))),
-    point_weight::AbstractArray{PW} = default_ds_dpoint_weight_batched(inp_points, PW, length(inp_rotation)),
-) where {N_in, N_out, TP<:Number, TR<:Number, TT<:Number, TB<:Number, OW<:Number, PW<:Number} = raster_pullback!(
-    ds_dout,
-    inp_points,
-    inp_rotation,
-    inp_translation,
-    inp_background,
-    inp_out_weight,
-    inp_point_weight,
-    points,
-    rotation,
-    translation,
-    background,
-    out_weight,
-    point_weight,
-)
-
+    points::AbstractArray{TP}=default_ds_dpoints_batched(
+        inp_points, N_in, length(inp_rotation)
+    ),
+    rotation::AbstractArray{TR,3}=similar(
+        inp_points, TR, (N_out, N_in, length(inp_rotation))
+    ),
+    translation::AbstractMatrix{TT}=similar(
+        inp_points, TT, (N_out, length(inp_translation))
+    ),
+    background::AbstractVector{TB}=similar(inp_points, TB, (length(inp_background))),
+    out_weight::AbstractVector{OW}=similar(inp_points, OW, (length(inp_out_weight))),
+    point_weight::AbstractArray{PW}=default_ds_dpoint_weight_batched(
+        inp_points, PW, length(inp_rotation)
+    ),
+) where {N_in,N_out,TP<:Number,TR<:Number,TT<:Number,TB<:Number,OW<:Number,PW<:Number}
+    return raster_pullback!(
+        ds_dout,
+        inp_points,
+        inp_rotation,
+        inp_translation,
+        inp_background,
+        inp_out_weight,
+        inp_point_weight,
+        points,
+        rotation,
+        translation,
+        background,
+        out_weight,
+        point_weight,
+    )
+end
 
 ###############################################
 # Step 4: Error on inconsistent dimensions
 ###############################################
 
 # single image
-raster_pullback!(
-    ::AbstractArray{<:Number, N_out},
-    ::AbstractVector{<:StaticVector{N_in, <:Number}},
-    ::StaticMatrix{N_out_rot, N_in_rot, <:Number},
-    ::StaticVector{N_out_trans, <:Number},
+function raster_pullback!(
+    ::AbstractArray{<:Number,N_out},
+    ::AbstractVector{<:StaticVector{N_in,<:Number}},
+    ::StaticMatrix{N_out_rot,N_in_rot,<:Number},
+    ::StaticVector{N_out_trans,<:Number},
     ::Number,
     ::Number,
     ::AbstractVector{<:Number},
     ::AbstractMatrix{<:Number},
     ::AbstractVector{<:Number};
-    kwargs...
-) where {N_in, N_out, N_in_rot, N_out_rot, N_out_trans} = error_dimensions(
-    N_in,
-    N_out,
-    N_in_rot,
-    N_out_rot,
-    N_out_trans
-)
+    kwargs...,
+) where {N_in,N_out,N_in_rot,N_out_rot,N_out_trans}
+    return error_dimensions(N_in, N_out, N_in_rot, N_out_rot, N_out_trans)
+end
 
 # batch of images
-raster_pullback!(
-    ::AbstractArray{<:Number, N_out_p1},
-    ::AbstractVector{<:StaticVector{N_in, <:Number}},
-    ::AbstractVector{<:StaticMatrix{N_out_rot, N_in_rot, <:Number}},
-    ::AbstractVector{<:StaticVector{N_out_trans, <:Number}},
+function raster_pullback!(
+    ::AbstractArray{<:Number,N_out_p1},
+    ::AbstractVector{<:StaticVector{N_in,<:Number}},
+    ::AbstractVector{<:StaticMatrix{N_out_rot,N_in_rot,<:Number}},
+    ::AbstractVector{<:StaticVector{N_out_trans,<:Number}},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
     ::AbstractArray{<:Number},
-    ::AbstractArray{<:Number, 3},
+    ::AbstractArray{<:Number,3},
     ::AbstractMatrix{<:Number},
     ::AbstractVector{<:Number},
     ::AbstractVector{<:Number},
     ::AbstractArray{<:Number},
-) where {N_in, N_out_p1, N_in_rot, N_out_rot, N_out_trans} = error_dimensions(
-    N_in,
-    N_out_p1 - 1,
-    N_in_rot,
-    N_out_rot,
-    N_out_trans
-)
+) where {N_in,N_out_p1,N_in_rot,N_out_rot,N_out_trans}
+    return error_dimensions(N_in, N_out_p1 - 1, N_in_rot, N_out_rot, N_out_trans)
+end
 
 function error_dimensions(N_in, N_out, N_in_rot, N_out_rot, N_out_trans)
     if N_out_trans != N_out
-        error("Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!")
+        error(
+            "Dimension of translation (got $N_out_trans) and output dimentsion (got $N_out) must agree!",
+        )
     end
     if N_out_rot != N_out
-        error("Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!")
+        error(
+            "Row dimension of rotation (got $N_out_rot) and output dimentsion (got $N_out) must agree!",
+        )
     end
     if N_in_rot != N_in
-        error("Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!")
+        error(
+            "Column dimension of rotation (got $N_in_rot) and points (got $N_in) must agree!",
+        )
     end
-    error("Dispatch error. Should not arrive here. Please file a bug.")
+    return error("Dispatch error. Should not arrive here. Please file a bug.")
 end
 
 default_background(rotation::AbstractMatrix, T=eltype(rotation)) = zero(T)
 
-default_background(rotation::AbstractVector{<:AbstractMatrix}, T=eltype(eltype(rotation))) = Zeros(T, length(rotation))
+function default_background(
+    rotation::AbstractVector{<:AbstractMatrix}, T=eltype(eltype(rotation))
+)
+    return Zeros(T, length(rotation))
+end
 
-default_background(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = Zeros(T, size(rotation, 3))
+function default_background(rotation::AbstractArray{_T,3} where {_T}, T=eltype(rotation))
+    return Zeros(T, size(rotation, 3))
+end
 
 default_out_weight(rotation::AbstractMatrix, T=eltype(rotation)) = one(T)
 
-default_out_weight(rotation::AbstractVector{<:AbstractMatrix}, T=eltype(eltype(rotation))) = Ones(T, length(rotation))
+function default_out_weight(
+    rotation::AbstractVector{<:AbstractMatrix}, T=eltype(eltype(rotation))
+)
+    return Ones(T, length(rotation))
+end
 
-default_out_weight(rotation::AbstractArray{_T, 3} where _T, T=eltype(rotation)) = Ones(T, size(rotation, 3))
+function default_out_weight(rotation::AbstractArray{_T,3} where {_T}, T=eltype(rotation))
+    return Ones(T, size(rotation, 3))
+end
 
-default_point_weight(points::AbstractVector{<:AbstractVector{T}}) where {T<:Number} = Ones(T, length(points))
+function default_point_weight(points::AbstractVector{<:AbstractVector{T}}) where {T<:Number}
+    return Ones(T, length(points))
+end
 
-default_ds_dpoints_single(points::AbstractVector{<:AbstractVector{TP}}, N_in) where {TP<:Number} = similar(points, TP, (N_in, length(points)))
+function default_ds_dpoints_single(
+    points::AbstractVector{<:AbstractVector{TP}}, N_in
+) where {TP<:Number}
+    return similar(points, TP, (N_in, length(points)))
+end
 
-default_ds_dpoints_batched(points::AbstractVector{<:AbstractVector{TP}}, N_in, batch_size) where {TP<:Number} = similar(points, TP, (N_in, length(points), min(batch_size, Threads.nthreads())))
+function default_ds_dpoints_batched(
+    points::AbstractVector{<:AbstractVector{TP}}, N_in, batch_size
+) where {TP<:Number}
+    return similar(points, TP, (N_in, length(points), min(batch_size, Threads.nthreads())))
+end
 
-default_ds_dpoint_weight_batched(points::AbstractVector{<:AbstractVector{<:Number}}, T, batch_size) = similar(points, T, (length(points), min(batch_size, Threads.nthreads())))
-
+function default_ds_dpoint_weight_batched(
+    points::AbstractVector{<:AbstractVector{<:Number}}, T, batch_size
+)
+    return similar(points, T, (length(points), min(batch_size, Threads.nthreads())))
+end
 
 @testitem "raster interface" begin
     include("../test/data.jl")
@@ -451,12 +500,7 @@ default_ds_dpoint_weight_batched(points::AbstractVector{<:AbstractVector{<:Numbe
             )
         end
         @testset "default arguments all as non-static array" begin
-            @test out ≈ raster(
-                D.grid_size_3d,
-                D.points,
-                D.rotations,
-                D.translations_3d,
-            )
+            @test out ≈ raster(D.grid_size_3d, D.points, D.rotations, D.translations_3d)
         end
     end
 
@@ -546,12 +590,7 @@ default_ds_dpoint_weight_batched(points::AbstractVector{<:AbstractVector{<:Numbe
             )
         end
         @testset "default arguments all as non-static array" begin
-            @test out ≈ raster(
-                D.grid_size_2d,
-                D.points,
-                D.projections,
-                D.translations_2d,
-            )
+            @test out ≈ raster(D.grid_size_2d, D.points, D.projections, D.translations_2d)
         end
     end
 end
