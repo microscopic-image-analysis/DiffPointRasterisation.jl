@@ -181,3 +181,17 @@ julia> ds_din.translation
   4.62725350082958
  -2.6823723442258274
 ```
+
+## Timings
+
+**Points**|**Images**|**Pixel**|**Mode**|**Fwd time CPU**|**Fwd time CPUx8\***|**Fwd time GPU**|**Bwd time CPU**|**Bwd time CPUx8\***|**Bwd time GPU\*\***
+:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:|:-----:
+10⁴|64|128²|3D → 2D|341 ms|73 ms|15 ms|37 ms|10 ms|1 ms
+10⁴|64|1024²|3D → 2D|387 ms|101 ms|16 ms|78 ms|24 ms|2 ms
+10⁵|64|128²|3D → 2D|3313 ms|741 ms|153 ms|374 ms|117 ms|9 ms
+10⁵|64|1024²|3D → 2D|3499 ms|821 ms|154 ms|469 ms|173 ms|10 ms
+10⁵|1|1024³|3D → 3D|493 ms|420 ms|24 ms|265 ms|269 ms|17 ms
+
+\* 8 julia threads on 4 hardware threads with hyperthreading
+
+\*\* 1 Nvidia HGX A100 GPU
