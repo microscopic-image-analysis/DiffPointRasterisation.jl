@@ -1,7 +1,7 @@
 name = "DiffPointRasterisation"
 uuid = "f984992d-3c45-4382-99a1-cf20f5c47c61"
 authors = ["Wolfhart Feldmeier <wolfhart.feldmeier@uni-jena.de>"]
-version = "0.2.0"
+version = "0.2.1"
 
 [deps]
 ArgCheck = "dce04be8-c92d-5529-be00-80e4d2c0e197"
@@ -33,6 +33,7 @@ ChainRulesTestUtils = "1.12"
 ChunkSplitters = "2"
 FillArrays = "1.9.3"
 KernelAbstractions = "0.9.18"
+Rotations = "1.7"
 SimpleUnPack = "1.1"
 StaticArrays = "1.9.1"
 Test = "1"
@@ -47,8 +48,9 @@ BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
 ChainRulesTestUtils = "cdddcdb0-9152-4a09-a978-84456f9df70a"
+Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
 [targets]
-test = ["Adapt", "Aqua", "BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
+test = ["Adapt", "Aqua", "BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Rotations", "Test", "TestItemRunner"]
