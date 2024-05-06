@@ -9,7 +9,6 @@ Atomix = "a9b6321e-bd34-4604-b9c9-b65b8de01458"
 ChunkSplitters = "ae650224-84b6-46f8-82ea-d812ca08434e"
 FillArrays = "1a297f60-69ca-5386-bcde-b61e274b549b"
 KernelAbstractions = "63c18a36-062a-441e-b654-da1e3ab1ce7c"
-Rotations = "6038ab10-8711-5258-84ad-4b1120ba62dc"
 SimpleUnPack = "ce78b400-467f-4804-87d8-8f486da07d0a"
 StaticArrays = "90137ffa-7385-5640-81b9-e52037218182"
 TestItems = "1c621080-faea-4a02-84b6-bbd5e436b8fe"
@@ -23,16 +22,27 @@ DiffPointRasterisationCUDAExt = "CUDA"
 DiffPointRasterisationChainRulesCoreExt = "ChainRulesCore"
 
 [compat]
+Adapt = "4"
+Aqua = "0.8"
+ArgCheck = "2.3"
+Atomix = "0.1"
+BenchmarkTools = "1"
+CUDA = "5.3"
+ChainRulesCore = "1.23"
+ChainRulesTestUtils = "1.12"
 ChunkSplitters = "2"
 FillArrays = "1.9.3"
-Rotations = "1.6.1"
+KernelAbstractions = "0.9.18"
 SimpleUnPack = "1.1"
 StaticArrays = "1.9.1"
+Test = "1"
+TestItemRunner = "0.2"
 TestItems = "0.1.1"
-julia = "1"
+julia = "^1.9"
 
 [extras]
 Adapt = "79e6a3ab-5dfb-504d-930d-738a2a938a0e"
+Aqua = "4c88cf16-eb10-579e-8560-4a9242c79595"
 BenchmarkTools = "6e4b80f9-dd63-53aa-95a3-0cdb28fa8baf"
 CUDA = "052768ef-5323-5732-b1bb-66c8b64840ba"
 ChainRulesCore = "d360d2e6-b24c-11e9-a2a3-2a2ae2dbcce4"
@@ -41,4 +51,4 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 TestItemRunner = "f8b46487-2199-4994-9208-9a1283c18c0a"
 
 [targets]
-test = ["Adapt", "BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
+test = ["Adapt", "Aqua", "BenchmarkTools", "ChainRulesCore", "ChainRulesTestUtils", "CUDA", "Test", "TestItemRunner"]
