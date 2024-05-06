@@ -4,6 +4,7 @@
 
 [![Build Status](https://github.com/microscopic-image-analysis/DiffPointRasterisation.jl/actions/workflows/CI.yml/badge.svg?branch=main)](https://github.com/microscopic-image-analysis/DiffPointRasterisation.jl/actions/workflows/CI.yml?query=branch%3Amain)
  [![](https://img.shields.io/badge/docs-main-blue.svg)](https://microscopic-image-analysis.github.io/DiffPointRasterisation.jl/dev)
+ [![Aqua QA](https://raw.githubusercontent.com/JuliaTesting/Aqua.jl/master/badge.svg)](https://github.com/JuliaTesting/Aqua.jl)
 
 ![](logo.gif)
 
